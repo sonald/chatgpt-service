@@ -1,0 +1,30 @@
+[package]
+name = "chatgpt-service"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+console_error_panic_hook = "0.1"
+serde = {version = "1", features = ["derive"]}
+sycamore = {version = "0.8", features = ["serde", "suspense"]}
+sycamore-router = "0.8"
+tracing = "0.1"
+tracing-wasm = "0.2"
+js-sys = "0.3"
+wasm-bindgen = {version = "0.2", features = ["serde-serialize"]}
+wasm-bindgen-futures = "0.4"
+#sycamore = { git = "https://github.com/sycamore-rs/sycamore", rev = "fc640d313e66f9a6af422fae44f4f72fa86280cc" }
+
+[dependencies.web-sys]
+version = "0.3"
+features = [
+    "Window",
+    "HtmlSelectElement",
+    "Navigator"
+]
+
+
+[workspace]
+members = ["src-tauri"]
