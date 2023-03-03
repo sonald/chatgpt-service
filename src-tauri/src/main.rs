@@ -3,80 +3,99 @@
     windows_subsystem = "windows"
 )]
 
-use lazy_static::lazy_static;
+mod api {
+    use lazy_static::lazy_static;
 
-lazy_static! {
-    static ref OPENAI_API_KEY: String =
-        { std::env::var("OPENAI_API_KEY").unwrap_or("".to_string()) };
-}
+    lazy_static! {
+        static ref OPENAI_API_KEY: String = std::env::var("OPENAI_API_KEY").unwrap_or("".to_string());
+    }
 
-static MODEL: &str = "text-davinci-003";
-static API_PATH: &str = "https://api.openai.com/v1/completions";
+    //static MODEL: &str = "text-davinci-003";
+    static COMPLETION_MODEL: &str = "gpt-3.5-turbo";
+    static CODING_MODEL: &str = "code-davinci-002";
+    static CHAT_API_PATH: &str = "https://api.openai.com/v1/chat/completions";
 
-use serde::{Deserialize, Serialize};
+    use serde::{Deserialize, Serialize};
 
-#[derive(Serialize)]
-struct Params {
-    model: String,
-    temperature: f32,
-    max_tokens: usize,
-    prompt: String,
-}
+    #[derive(Serialize, Deserialize, Debug, Clone)]
+    pub struct Message {
+        role: String,
+        content: String,
+    }
 
-///```json
-///{
-///     "id":"cmpl-6jPmzCoNwIH3Rx5EHrGhQPVHxPQdX",
-///     "object":"text_completion",
-///     "created":1676281913,
-///     "model":"text-davinci-003",
-///     "choices":[{"text":"\n\nQ: What did the fish say when he hit a concrete wall?\nA: Dam!","index":0,"logprobs":null,"finish_reason":"stop"}],
-///     "usage":{"prompt_tokens":4,"completion_tokens":21,"total_tokens":25}}
-///```
-#[derive(Debug, Default, Deserialize)]
-struct Choice {
-    text: String,
-    index: usize,
-    finish_reason: String,
-}
+    #[derive(Serialize, Debug)]
+    pub struct Params<'a> {
+        model: &'a str,
+        temperature: f32,
+        stream: bool,
+        messages: Vec<Message>,
+    }
 
-#[derive(Debug, Default, Deserialize)]
-struct Answer {
-    model: String,
-    object: String,
-    choices: Vec<Choice>,
-}
+    #[derive(Debug, Default, Deserialize)]
+    struct Usage {
+        prompt_tokens: usize,
+        completion_tokens: usize,
+        total_tokens: usize,
+    }
 
-#[tauri::command]
-async fn completion(prompt: String) -> String {
-    eprintln!("completion({})", prompt);
+    #[derive(Debug, Deserialize)]
+    struct Choice {
+        index: usize,
+        message: Message,
+        finish_reason: String,
+    }
 
-    let data = Params {
-        model: MODEL.to_owned(),
-        temperature: 1.0,
-        max_tokens: 1000,
-        prompt,
-    };
+    #[derive(Debug, Default, Deserialize)]
+    struct Answer {
+        id: String,
+        object: String,
+        choices: Vec<Choice>,
+        usage: Usage
+    }
 
-    let cli = reqwest::Client::new();
-    let resp = cli
-        .post(API_PATH)
-        .header(
-            reqwest::header::AUTHORIZATION,
-            format!("Bearer {}", OPENAI_API_KEY.as_str()),
-        )
-        .json(&data)
-        .send()
-        .await
-        .unwrap();
+    pub async fn chat_completion(messages: Vec<Message>) -> Message {
+        let data = Params {
+            model: COMPLETION_MODEL,
+            temperature: 1.0,
+            messages,
+            stream: false,
+        };
 
-    match resp.json::<Answer>().await {
-        Ok(result) => result.choices[0].text.clone(),
-        Err(err) => {
-            eprintln!("{:?}", err);
-            "".to_string()
+        eprintln!("completion({})", serde_json::to_string(&data).unwrap());
+
+        let cli = reqwest::Client::new();
+        let resp = cli
+            .post(CHAT_API_PATH)
+            .header(
+                reqwest::header::AUTHORIZATION,
+                format!("Bearer {}", OPENAI_API_KEY.as_str()),
+            ).header(
+            reqwest::header::CONTENT_TYPE,
+            "application/json",
+            )
+                .json(&data)
+                .send()
+                .await
+                .unwrap();
+
+        match resp.json::<Answer>().await {
+            Ok(result) => result.choices[0].message.clone(),
+            Err(err) => {
+                eprintln!("{:?}", err);
+                Message {
+                    role: "assistant".to_string(),
+                    content: "".to_string(),
+                }
+            }
         }
     }
 }
+
+#[tauri::command]
+async fn completion(messages: Vec<api::Message>) -> api::Message {
+    api::chat_completion(messages).await
+}
+
 
 fn main() {
     tauri::Builder::default()

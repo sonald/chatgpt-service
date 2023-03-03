@@ -6,3 +6,4 @@ cargo tauri build
 
 # test run
 OPENAI_API_KEY="your_key_here" cargo tauri dev
+

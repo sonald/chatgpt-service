@@ -1,8 +1,9 @@
+use serde::{Deserialize, Serialize};
 use sycamore::prelude::*;
-use tracing::{info, debug};
+use sycamore_router::{navigate, HistoryIntegration, Route, Router};
+use tracing::{debug, info};
 use wasm_bindgen::prelude::*;
-use sycamore_router::{Route, Router, HistoryIntegration, navigate};
-use web_sys::{window, console};
+use web_sys::{console, window};
 
 #[derive(Route)]
 enum AppRoutes {
@@ -11,9 +12,9 @@ enum AppRoutes {
     #[to("/about")]
     About,
     #[to("/chat")]
-    Completion,
+    ChatCompletion,
     #[not_found]
-    NotFound
+    NotFound,
 }
 
 #[component]
@@ -30,47 +31,40 @@ fn About<G: Html>(ctx: Scope) -> View<G> {
     }
 }
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
-struct ConversationRound {
-    human: String,
-    ai: String,
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
+struct Message {
+    role: String,
+    content: String,
 }
+
+static ROLE_SYSTEM: &'static str = "system";
+static ROLE_USER: &'static str = "user";
+static ROLE_ASSISTANT: &'static str = "assistant";
 
 #[derive(Debug, Clone)]
 struct Conversation<'a> {
     topic: &'a Signal<String>,
-    chats: &'a Signal<Vec<ConversationRound>>,
+    chats: &'a Signal<Vec<Message>>,
 }
 
 impl<'a> Conversation<'a> {
     pub fn new(ctx: Scope<'a>) -> Self {
-        Conversation { 
+        Conversation {
             topic: create_signal(ctx, "".to_string()),
             chats: create_signal(ctx, Vec::default()),
         }
-    }
-
-    pub fn build_prompt(&self) -> String {
-        let mut p = String::new();
-        p.push_str(&format!("start a conversation about {}\n", self.topic));
-        for r in &*self.chats.get() {
-            p.push_str(&format!("Q: {}\n", r.human));
-            p.push_str(&format!("A: {}\n", r.ai));
-        }
-
-        p
     }
 }
 
 //#[derive(Debug)]
 //struct Conversations {
-    //data: Vec<Conversation>,
+//data: Vec<Conversation>,
 //}
 
 //impl Conversations {
-    //pub fn new() -> Self {
-        //Conversations { data: Vec::default() }
-    //}
+//pub fn new() -> Self {
+//Conversations { data: Vec::default() }
+//}
 //}
 
 #[derive(Prop)]
@@ -96,7 +90,7 @@ fn Bubble<G: Html>(ctx: Scope, props: BubbleProps) -> View<G> {
 }
 
 #[component]
-fn Completion<G: Html>(ctx: Scope) -> View<G> {
+fn ChatCompletion<G: Html>(ctx: Scope) -> View<G> {
     let question = create_signal(ctx, "".to_string());
     let clicked = create_signal(ctx, ());
 
@@ -107,18 +101,38 @@ fn Completion<G: Html>(ctx: Scope) -> View<G> {
     create_effect(ctx, move || {
         clicked.track();
         sycamore::futures::spawn_local_scoped(ctx, async move {
-            let q = question.get().to_string();
-            if q.is_empty() { return }
-            conversation.get().chats.modify().push(ConversationRound {
-                human: q,
-                ai: "....".to_string()
+            conversation.get().chats.modify().push(Message {
+                role: ROLE_USER.to_owned(),
+                content: {
+                    let q = question.get().to_string();
+                    if q.is_empty() {
+                        return;
+                    }
+                    q
+                },
             });
 
+            console::log_1(&"effect2!".into());
+
             question.set("".to_string());
-            let prompt = conversation.get().build_prompt();
-            let result = openai_completion(&prompt).await;
-            if let Some(p) = conversation.get().chats.modify().last_mut() {
-                p.ai = result.as_string().unwrap();
+            let prompt = conversation.get().chats.get();
+            conversation.get().chats.modify().push(Message {
+                role: ROLE_ASSISTANT.to_owned(),
+                content: "....".to_string(),
+            });
+
+            match serde_wasm_bindgen::to_value(prompt.as_ref()) {
+            //match JsValue::from_serde(prompt.as_ref()) {
+                Ok(prompt) => {
+                    let msg: Message = openai_completion(prompt).await.into_serde().unwrap();
+                    if let Some(p) = conversation.get().chats.modify().last_mut() {
+                        assert!(p.role == msg.role);
+                        p.content = msg.content;
+                    }
+                },
+                Err(e) => {
+                    console::log_1(&e.to_string().into());
+                }
             }
         });
     });
@@ -127,19 +141,26 @@ fn Completion<G: Html>(ctx: Scope) -> View<G> {
         div(class="flex-1 h-full flex flex-col") {
             h1(class="title shrink") {
                 "Conversation: " (conversation.get().topic.get().to_string())
-            } 
+            }
 
             ul(class="flex-1 flex flex-col my-2 max-h-5/6 overflow-y-scroll") {
                 Keyed(iterable=conversation.get().chats,
-                    view=|cx, x| view! {cx,
-                        Bubble(actor="H".to_string(),
-                                at_start=true, 
-                                content=x.human)
+                view=|cx, x| {
+                    match x.role {
+                        v if v == ROLE_ASSISTANT => view! {cx,
                         Bubble(actor="AI".to_string(),
-                                at_start=false, 
-                                content=x.ai)
-                    },
-                    key=|x| x.clone())
+                        at_start=false,
+                        content=x.content)
+                        },
+                        v if v == ROLE_USER => view! {cx,
+                            Bubble(actor="H".to_string(),
+                            at_start=true,
+                            content=x.content)
+                        },
+                        _ => view! {cx, }
+                    }
+                },
+                key=|x| x.clone())
             }
 
             textarea(class="textarea textarea-info mb-2", placeholder="type here", bind:value=question)
@@ -156,7 +177,7 @@ fn Completion<G: Html>(ctx: Scope) -> View<G> {
 
 #[component]
 fn Home<G: Html>(ctx: Scope) -> View<G> {
-    view! { ctx, 
+    view! { ctx,
         div(class="card flex-1 items-center") {
             h1 { "Home" }
         }
@@ -208,29 +229,33 @@ fn Side<G: Html>(ctx: Scope) -> View<G> {
     }
 }
 
-fn window_event_listener<'a, F>(ctx: Scope<'a>, ev: &str, f: F) where F: FnMut() + 'a {
+fn window_event_listener<'a, F>(ctx: Scope<'a>, ev: &str, f: F)
+where
+    F: FnMut() + 'a,
+{
     let boxed: Box<dyn FnMut()> = Box::new(f);
     let handler: Box<dyn FnMut() + 'static> = unsafe { std::mem::transmute(boxed) };
     let closure = create_ref(ctx, Closure::wrap(handler));
 
     let window = window().unwrap();
-    window.add_event_listener_with_callback(ev, closure.as_ref().unchecked_ref()).unwrap_throw();
+    window
+        .add_event_listener_with_callback(ev, closure.as_ref().unchecked_ref())
+        .unwrap_throw();
     on_cleanup(ctx, move || drop(closure));
 }
 
 #[component]
 fn App<G: Html>(ctx: Scope) -> View<G> {
-
     //provide_context(ctx, Conversations::new());
 
     window_event_listener(ctx, "load", || {
-        console::log_1(&"loaded".into()); 
+        console::log_1(&"loaded".into());
         navigate("/chat");
     });
 
     window_event_listener(ctx, "resize", || {
         debug!("on load");
-        console::log_1(&"resized".into()); 
+        console::log_1(&"resized".into());
         //navigate("/chat");
     });
 
@@ -241,12 +266,12 @@ fn App<G: Html>(ctx: Scope) -> View<G> {
             div(class="flex-1 flex flex-row overflow-y-auto h-full") {
                 Side()
 
-                Router(integration=HistoryIntegration::new(), 
+                Router(integration=HistoryIntegration::new(),
                     view=|cx, route: &ReadSignal<AppRoutes>| {
                         view! { cx,
                             div(class="app flex-1 flex m-4") {
                                 (match route.get().as_ref() {
-                                    AppRoutes::Completion => view!{cx, Completion},
+                                    AppRoutes::ChatCompletion => view!{cx, ChatCompletion},
                                     AppRoutes::About => view!{cx, About},
                                     AppRoutes::Home => view!{cx, Home},
                                     AppRoutes::NotFound => view!{cx, NotFound},
@@ -266,7 +291,6 @@ fn App<G: Html>(ctx: Scope) -> View<G> {
 fn main() {
     tracing_wasm::set_as_global_default();
 
-
     sycamore::render(|ctx| {
         view! { ctx,
             App
@@ -277,5 +301,5 @@ fn main() {
 #[wasm_bindgen(module = "/api.js")]
 extern "C" {
     #[wasm_bindgen(js_name = invokeCompletion)]
-    async fn openai_completion(prompt: &str) -> JsValue;
+    async fn openai_completion(messages: JsValue) -> JsValue;
 }
