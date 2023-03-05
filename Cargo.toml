@@ -16,6 +16,8 @@ js-sys = "0.3"
 wasm-bindgen = {version = "0.2", features = ["serde-serialize"]}
 wasm-bindgen-futures = "0.4"
 serde-wasm-bindgen = "*"
+config = "0.13.3"
+pulldown-cmark = "0.9.2"
 #sycamore = { git = "https://github.com/sycamore-rs/sycamore", rev = "fc640d313e66f9a6af422fae44f4f72fa86280cc" }
 
 [dependencies.web-sys]

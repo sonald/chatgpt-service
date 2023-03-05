@@ -5,6 +5,7 @@
 
 mod api {
     use lazy_static::lazy_static;
+    use config::{Config, ConfigError, File, Environment};
 
     lazy_static! {
         static ref OPENAI_API_KEY: String = std::env::var("OPENAI_API_KEY").unwrap_or("".to_string());
@@ -24,6 +25,7 @@ mod api {
     }
 
     #[derive(Serialize, Debug)]
+    #[allow(unused)]
     pub struct Params<'a> {
         model: &'a str,
         temperature: f32,
@@ -32,6 +34,7 @@ mod api {
     }
 
     #[derive(Debug, Default, Deserialize)]
+    #[allow(unused)]
     struct Usage {
         prompt_tokens: usize,
         completion_tokens: usize,
@@ -39,6 +42,7 @@ mod api {
     }
 
     #[derive(Debug, Deserialize)]
+    #[allow(unused)]
     struct Choice {
         index: usize,
         message: Message,
@@ -46,6 +50,7 @@ mod api {
     }
 
     #[derive(Debug, Default, Deserialize)]
+    #[allow(unused)]
     struct Answer {
         id: String,
         object: String,
@@ -53,38 +58,74 @@ mod api {
         usage: Usage
     }
 
-    pub async fn chat_completion(messages: Vec<Message>) -> Message {
-        let data = Params {
-            model: COMPLETION_MODEL,
-            temperature: 1.0,
-            messages,
-            stream: false,
-        };
+    #[derive(Debug, Deserialize)]
+    #[allow(unused)]
+    pub struct Settings {
+        model: String,
+        temperature: f32,
+        stream: bool,
+        api_key: String,
+    }
 
-        eprintln!("completion({})", serde_json::to_string(&data).unwrap());
+    #[derive(Debug)]
+    pub struct ChatGPT {
+        settings: Settings,
+    }
 
-        let cli = reqwest::Client::new();
-        let resp = cli
-            .post(CHAT_API_PATH)
-            .header(
-                reqwest::header::AUTHORIZATION,
-                format!("Bearer {}", OPENAI_API_KEY.as_str()),
-            ).header(
-            reqwest::header::CONTENT_TYPE,
-            "application/json",
-            )
+    impl ChatGPT {
+        pub fn new() -> Self {
+            let settings = ChatGPT::load_settings().unwrap();
+            eprintln!("{:?}", settings);
+            ChatGPT {
+                settings
+            }
+        }
+
+        fn load_settings() -> Result<Settings, ConfigError> {
+            //let api_key = OPENAI_API_KEY.to_owned();
+            let cfg = Config::builder()
+                .add_source(File::with_name("chatgpt"))
+                .add_source(Environment::with_prefix("chatgpt"))
+                .build()?;
+
+            eprintln!("{:?}", cfg);
+            cfg.try_deserialize()
+
+        }
+
+        pub async fn chat_completion(&self, messages: Vec<Message>) -> Message {
+            let data = Params {
+                model: &self.settings.model,
+                temperature: self.settings.temperature,
+                messages,
+                stream: self.settings.stream,
+            };
+
+            eprintln!("completion({})", serde_json::to_string(&data).unwrap());
+
+            let cli = reqwest::Client::new();
+            let resp = cli
+                .post(CHAT_API_PATH)
+                .header(
+                    reqwest::header::AUTHORIZATION,
+                    format!("Bearer {}", self.settings.api_key.as_str()),
+                ).header(
+                    reqwest::header::CONTENT_TYPE,
+                    "application/json",
+                )
                 .json(&data)
                 .send()
                 .await
                 .unwrap();
 
-        match resp.json::<Answer>().await {
-            Ok(result) => result.choices[0].message.clone(),
-            Err(err) => {
-                eprintln!("{:?}", err);
-                Message {
-                    role: "assistant".to_string(),
-                    content: "".to_string(),
+            match resp.json::<Answer>().await {
+                Ok(result) => result.choices[0].message.clone(),
+                Err(err) => {
+                    eprintln!("{:?}", err);
+                    Message {
+                        role: "assistant".to_string(),
+                        content: "".to_string(),
+                    }
                 }
             }
         }
@@ -93,7 +134,7 @@ mod api {
 
 #[tauri::command]
 async fn completion(messages: Vec<api::Message>) -> api::Message {
-    api::chat_completion(messages).await
+    api::ChatGPT::new().chat_completion(messages).await
 }
 
 

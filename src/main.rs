@@ -4,6 +4,7 @@ use sycamore_router::{navigate, HistoryIntegration, Route, Router};
 use tracing::{debug, info};
 use wasm_bindgen::prelude::*;
 use web_sys::{console, window};
+use pulldown_cmark as md;
 
 #[derive(Route)]
 enum AppRoutes {
@@ -67,6 +68,14 @@ impl<'a> Conversation<'a> {
 //}
 //}
 
+fn markdown_to_html<S: AsRef<str>>(md: S) -> String {
+    let p = md::Parser::new(md.as_ref());
+    let mut html_str = String::new();
+    md::html::push_html(&mut html_str, p);
+
+    html_str
+}
+
 #[derive(Prop)]
 struct BubbleProps {
     actor: String,
@@ -76,16 +85,31 @@ struct BubbleProps {
 
 #[component]
 fn Bubble<G: Html>(ctx: Scope, props: BubbleProps) -> View<G> {
-    view! {
-        ctx,
-        div(class=(if props.at_start {"chat chat-start"} else {"chat chat-end"})) {
-            div(class="chat-image avatar") {
-                label(class="btn btn-circle rounded-full bg-slate-200") { (props.actor) }
-            }
-            div(class=(if props.at_start {"chat-bubble chat-bubble-secondary"} else {"chat-bubble chat-bubble-success"})) {
-                (props.content)
+    let html_content = markdown_to_html(&props.content);
+    if props.at_start {
+        view! {
+            ctx,
+            div(class="chat chat-start") {
+                div(class="chat-image avatar") {
+                    label(class="btn btn-circle rounded-full bg-slate-200") { (props.actor) }
+                }
+                div(class=("chat-bubble chat-bubble-secondary"),
+                dangerously_set_inner_html=&html_content) 
             }
         }
+
+    } else {
+        view! {
+            ctx,
+            div(class="chat chat-end") {
+                div(class="chat-image avatar") {
+                    label(class="btn btn-circle rounded-full bg-slate-200") { (props.actor) }
+                }
+                div(class="chat-bubble chat-bubble-success",
+                dangerously_set_inner_html=&html_content) 
+            }
+        }
+
     }
 }
 
