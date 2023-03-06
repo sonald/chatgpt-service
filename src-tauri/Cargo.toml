@@ -1,11 +1,11 @@
 [package]
-name = "app"
+name = "chatgpt-backend"
 version = "0.1.0"
 description = "A Tauri App"
-authors = ["you"]
-license = ""
+authors = ["Sian Cao <yinshuiboy@gmail.com"]
+license = "MIT"
 repository = ""
-default-run = "app"
+default-run = "chatgpt-backend"
 edition = "2021"
 rust-version = "1.59"
 
@@ -22,12 +22,17 @@ reqwest = {version = "0.11", features = ["blocking", "json"] }
 lazy_static = "1.4"
 config = "0.13.3"
 rand = "0.8.5"
+thiserror = "1.0.39"
+dashmap = { version = "5.4.0", features = ["serde", "rayon"] }
+common = { path = "../common" }
 
 
 [features]
 # by default Tauri runs in production mode
 # when `tauri dev` runs it is executed with `cargo run --no-default-features` if `devPath` is an URL
-default = ["custom-protocol"]
+default = ["custom-protocol", "local-storage"]
 # this feature is used for production builds where `devPath` points to the filesystem
 # DO NOT remove this
 custom-protocol = ["tauri/custom-protocol"]
+local-storage = []
+remote-storage = []

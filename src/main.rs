@@ -1,10 +1,13 @@
-use serde::{Deserialize, Serialize};
+#![allow(non_snake_case)]
+
 use sycamore::prelude::*;
 use sycamore_router::{navigate, HistoryIntegration, Route, Router};
-use tracing::{debug, info};
+use tracing::debug;
 use wasm_bindgen::prelude::*;
 use web_sys::{console, window};
 use pulldown_cmark as md;
+
+use common::*;
 
 #[derive(Route)]
 enum AppRoutes {
@@ -31,16 +34,6 @@ fn About<G: Html>(ctx: Scope) -> View<G> {
         h1 { "copyright @ sonald (yinshuiboy@gmail.com)" }
     }
 }
-
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
-struct Message {
-    role: String,
-    content: String,
-}
-
-static ROLE_SYSTEM: &'static str = "system";
-static ROLE_USER: &'static str = "user";
-static ROLE_ASSISTANT: &'static str = "assistant";
 
 #[derive(Debug, Clone)]
 struct Conversation<'a> {
@@ -126,7 +119,7 @@ fn ChatCompletion<G: Html>(ctx: Scope) -> View<G> {
         clicked.track();
         sycamore::futures::spawn_local_scoped(ctx, async move {
             conversation.get().chats.modify().push(Message {
-                role: ROLE_USER.to_owned(),
+                role: String::from(<KnownRoles as Into<&str>>::into(KnownRoles::User)),
                 content: {
                     let q = question.get().to_string();
                     if q.is_empty() {
@@ -136,13 +129,11 @@ fn ChatCompletion<G: Html>(ctx: Scope) -> View<G> {
                 },
             });
 
-            console::log_1(&"effect2!".into());
-
             question.set("".to_string());
             let prompt = conversation.get().chats.get();
             conversation.get().chats.modify().push(Message {
-                role: ROLE_ASSISTANT.to_owned(),
-                content: "....".to_string(),
+                role: String::from(<KnownRoles as Into<&str>>::into(KnownRoles::Assistant)),
+                content: "...".to_string(),
             });
 
             match serde_wasm_bindgen::to_value(prompt.as_ref()) {
@@ -176,12 +167,12 @@ fn ChatCompletion<G: Html>(ctx: Scope) -> View<G> {
                 Keyed(iterable=conversation.get().chats,
                 view=|cx, x| {
                     match x.role {
-                        v if v == ROLE_ASSISTANT => view! {cx,
+                        v if v == <KnownRoles as Into<&str>>::into(KnownRoles::Assistant) => view! {cx,
                         Bubble(actor="AI".to_string(),
                         at_start=false,
                         content=x.content)
                         },
-                        v if v == ROLE_USER => view! {cx,
+                        v if v == <KnownRoles as Into<&str>>::into(KnownRoles::User) => view! {cx,
                             Bubble(actor="H".to_string(),
                             at_start=true,
                             content=x.content)
@@ -283,9 +274,7 @@ fn App<G: Html>(ctx: Scope) -> View<G> {
     });
 
     window_event_listener(ctx, "resize", || {
-        debug!("on load");
         console::log_1(&"resized".into());
-        //navigate("/chat");
     });
 
     view! { ctx,
