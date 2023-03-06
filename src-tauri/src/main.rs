@@ -11,10 +11,6 @@ mod api {
     use config::{Config, ConfigError, File, Environment};
     use rand::{Rng, SeedableRng, rngs::StdRng, distributions::{Uniform, Distribution}};
 
-    lazy_static! {
-        pub static ref CHAT_SERVICE: ChatGPT = ChatGPT::new(); 
-    }
-
     static COMPLETION_MODEL: &str = "gpt-3.5-turbo";
     static CODING_MODEL: &str = "code-davinci-002";
     static CHAT_API_PATH: &str = "https://api.openai.com/v1/chat/completions";
@@ -75,6 +71,7 @@ mod api {
     pub struct ChatGPT {
         settings: Settings,
         rng: Arc<Mutex<StdRng>>,
+        pub cli: reqwest::Client,
     }
 
     impl ChatGPT {
@@ -84,6 +81,7 @@ mod api {
             ChatGPT {
                 settings,
                 rng: Arc::new(Mutex::new(StdRng::from_entropy())),
+                cli: reqwest::Client::new(),
             }
         }
 
@@ -126,11 +124,9 @@ mod api {
             eprintln!("completion({})", serde_json::to_string(&data).unwrap());
             eprintln!("api_key({})", api_key);
 
-            let cli = reqwest::Client::new();
-
             let mut retried = false;
             let resp = loop {
-                match cli
+                match self.cli
                     .post(CHAT_API_PATH)
                     .header(
                         reqwest::header::AUTHORIZATION,
@@ -165,13 +161,14 @@ mod api {
 }
 
 #[tauri::command]
-async fn completion(messages: Vec<api::Message>) -> Result<api::Message, String> {
-    api::CHAT_SERVICE.chat_completion(messages).await
+async fn completion<'r>(messages: Vec<api::Message>, state: tauri::State<'r, api::ChatGPT>) -> Result<api::Message, String> {
+    state.chat_completion(messages).await
 }
 
 
 fn main() {
     tauri::Builder::default()
+        .manage(api::ChatGPT::new())
         .invoke_handler(tauri::generate_handler![completion])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
