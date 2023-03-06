@@ -3,15 +3,18 @@
     windows_subsystem = "windows"
 )]
 
+#[allow(unused)]
 mod api {
+    use std::sync::{Mutex, Arc};
+
     use lazy_static::lazy_static;
     use config::{Config, ConfigError, File, Environment};
+    use rand::{Rng, SeedableRng, rngs::StdRng, distributions::{Uniform, Distribution}};
 
     lazy_static! {
-        static ref OPENAI_API_KEY: String = std::env::var("OPENAI_API_KEY").unwrap_or("".to_string());
+        pub static ref CHAT_SERVICE: ChatGPT = ChatGPT::new(); 
     }
 
-    //static MODEL: &str = "text-davinci-003";
     static COMPLETION_MODEL: &str = "gpt-3.5-turbo";
     static CODING_MODEL: &str = "code-davinci-002";
     static CHAT_API_PATH: &str = "https://api.openai.com/v1/chat/completions";
@@ -65,11 +68,13 @@ mod api {
         temperature: f32,
         stream: bool,
         api_key: String,
+        api_keys: Vec<String>,
     }
 
     #[derive(Debug)]
     pub struct ChatGPT {
         settings: Settings,
+        rng: Arc<Mutex<StdRng>>,
     }
 
     impl ChatGPT {
@@ -77,23 +82,35 @@ mod api {
             let settings = ChatGPT::load_settings().unwrap();
             eprintln!("{:?}", settings);
             ChatGPT {
-                settings
+                settings,
+                rng: Arc::new(Mutex::new(StdRng::from_entropy())),
             }
         }
 
         fn load_settings() -> Result<Settings, ConfigError> {
-            //let api_key = OPENAI_API_KEY.to_owned();
             let cfg = Config::builder()
+                .set_default("model", COMPLETION_MODEL)?
+                .set_default("stream", false)?
+                .set_default("api_key", "")?
                 .add_source(File::with_name("chatgpt"))
-                .add_source(Environment::with_prefix("chatgpt"))
+                .add_source(Environment::with_prefix("openai"))
                 .build()?;
 
-            eprintln!("{:?}", cfg);
             cfg.try_deserialize()
 
         }
 
-        pub async fn chat_completion(&self, messages: Vec<Message>) -> Message {
+        fn pick_api_key(&self) -> Option<&str> {
+            if self.settings.api_key.is_empty() {
+                let range = Uniform::from(0..self.settings.api_keys.len());
+                let i = self.rng.lock().unwrap().sample(range);
+                self.settings.api_keys.get(i).map(|s| s.as_str())
+            } else {
+                Some(self.settings.api_key.as_str())
+            }
+        }
+
+        pub async fn chat_completion(&self, messages: Vec<Message>) -> Result<Message, String> {
             let data = Params {
                 model: &self.settings.model,
                 temperature: self.settings.temperature,
@@ -101,31 +118,46 @@ mod api {
                 stream: self.settings.stream,
             };
 
+            let api_key = match self.pick_api_key() {
+                Some(key) => key,
+                None => return Err("api key is not set".to_string()),
+            };
+
             eprintln!("completion({})", serde_json::to_string(&data).unwrap());
+            eprintln!("api_key({})", api_key);
 
             let cli = reqwest::Client::new();
-            let resp = cli
-                .post(CHAT_API_PATH)
-                .header(
-                    reqwest::header::AUTHORIZATION,
-                    format!("Bearer {}", self.settings.api_key.as_str()),
-                ).header(
+
+            let mut retried = false;
+            let resp = loop {
+                match cli
+                    .post(CHAT_API_PATH)
+                    .header(
+                        reqwest::header::AUTHORIZATION,
+                        format!("Bearer {}", api_key),
+                    ).header(
                     reqwest::header::CONTENT_TYPE,
                     "application/json",
-                )
-                .json(&data)
-                .send()
-                .await
-                .unwrap();
+                    )
+                    .json(&data)
+                    .send()
+                    .await {
+                        Ok(resp) => break resp,
+                        Err(e) => {
+                            if retried {
+                                return Err(format!("request error: {}", e));
+                            }
+                            eprintln!("retry on error: {:?}", e);
+                            retried = true;
+                        }
+                    }
+            };
 
             match resp.json::<Answer>().await {
-                Ok(result) => result.choices[0].message.clone(),
+                Ok(result) => Ok(result.choices[0].message.clone()),
                 Err(err) => {
                     eprintln!("{:?}", err);
-                    Message {
-                        role: "assistant".to_string(),
-                        content: "".to_string(),
-                    }
+                    Err(err.to_string())
                 }
             }
         }
@@ -133,8 +165,8 @@ mod api {
 }
 
 #[tauri::command]
-async fn completion(messages: Vec<api::Message>) -> api::Message {
-    api::ChatGPT::new().chat_completion(messages).await
+async fn completion(messages: Vec<api::Message>) -> Result<api::Message, String> {
+    api::CHAT_SERVICE.chat_completion(messages).await
 }
 
 

@@ -146,9 +146,14 @@ fn ChatCompletion<G: Html>(ctx: Scope) -> View<G> {
             });
 
             match serde_wasm_bindgen::to_value(prompt.as_ref()) {
-            //match JsValue::from_serde(prompt.as_ref()) {
                 Ok(prompt) => {
-                    let msg: Message = openai_completion(prompt).await.into_serde().unwrap();
+                    let msg: Message = match openai_completion(prompt).await {
+                        Ok(msg) => serde_wasm_bindgen::from_value(msg).unwrap(),
+                        Err(e) => {
+                            console::log_1(&e);
+                            return;
+                        }
+                    };
                     if let Some(p) = conversation.get().chats.modify().last_mut() {
                         assert!(p.role == msg.role);
                         p.content = msg.content;
@@ -324,6 +329,6 @@ fn main() {
 
 #[wasm_bindgen(module = "/api.js")]
 extern "C" {
-    #[wasm_bindgen(js_name = invokeCompletion)]
-    async fn openai_completion(messages: JsValue) -> JsValue;
+    #[wasm_bindgen(js_name = invokeCompletion, catch)]
+    async fn openai_completion(messages: JsValue) -> Result<JsValue, JsValue>;
 }
