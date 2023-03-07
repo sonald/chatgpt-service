@@ -11,8 +11,11 @@ static CODING_MODEL: &str = "code-davinci-002";
 static CHAT_API_PATH: &str = "https://api.openai.com/v1/chat/completions";
 
 use serde::{Deserialize, Serialize};
-pub use common::Message;
+pub use common::{Message, ConversationId};
 
+use crate::storage::Storage;
+//#[cfg(feature = "local-storage")]
+use crate::storage::local::KVStorage;
 
 #[derive(Serialize, Debug)]
 #[allow(unused)]
@@ -58,11 +61,12 @@ pub struct Settings {
     api_keys: Vec<String>,
 }
 
-#[derive(Debug)]
 pub struct ChatGPT {
     settings: Settings,
     rng: Arc<Mutex<StdRng>>,
     pub cli: reqwest::Client,
+
+    store: Box<dyn Storage + Send + Sync>,
 }
 
 impl ChatGPT {
@@ -72,6 +76,8 @@ impl ChatGPT {
             settings,
             rng: Arc::new(Mutex::new(StdRng::from_entropy())),
             cli: reqwest::Client::new(),
+
+            store: Box::new(KVStorage::new())
         }
     }
 
@@ -85,7 +91,6 @@ impl ChatGPT {
             .build()?;
 
         cfg.try_deserialize()
-
     }
 
     fn pick_api_key(&self) -> Option<&str> {
@@ -98,11 +103,25 @@ impl ChatGPT {
         }
     }
 
-    pub async fn chat_completion(&self, messages: Vec<Message>) -> Result<Message, String> {
+
+    pub fn start_conversation(&self) -> Result<ConversationId, String> {
+        eprintln!("start_conversation");
+        Ok(self.store.start_conversation(None))
+    }
+
+    pub fn get_conversations(&self) -> Result<Vec<ConversationId>, String> {
+        self.store.get_conversations()
+    }
+    
+    pub fn get_conversation(&self, id: ConversationId) -> Result<Vec<Message>, String> {
+        self.store.get_conversation(id)
+    }
+
+    pub async fn chat_completion(&self, id: ConversationId, mut messages: Vec<Message>) -> Result<Message, String> {
         let data = Params {
             model: &self.settings.model,
             temperature: self.settings.temperature,
-            messages,
+            messages: messages.clone(),
             stream: self.settings.stream,
         };
 
@@ -143,7 +162,12 @@ impl ChatGPT {
         eprintln!("data: {}", String::from_utf8_lossy(&data));
         match serde_json::from_slice::<Answer>(&data) {
         //match resp.json::<Answer>().await {
-            Ok(result) => Ok(result.choices[0].message.clone()),
+            Ok(result) => {
+                messages.push(result.choices[0].message.clone());
+                self.store.store_conversation(id, messages).unwrap();
+
+                Ok(result.choices[0].message.clone())
+            },
             Err(err) => {
                 eprintln!("{:?}", err);
                 Err(err.to_string())

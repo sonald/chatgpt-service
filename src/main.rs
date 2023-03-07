@@ -2,7 +2,6 @@
 
 use sycamore::prelude::*;
 use sycamore_router::{navigate, HistoryIntegration, Route, Router};
-use tracing::debug;
 use wasm_bindgen::prelude::*;
 use web_sys::{console, window};
 use pulldown_cmark as md;
@@ -37,6 +36,7 @@ fn About<G: Html>(ctx: Scope) -> View<G> {
 
 #[derive(Debug, Clone)]
 struct Conversation<'a> {
+    id: &'a Signal<Option<ConversationId>>,
     topic: &'a Signal<String>,
     chats: &'a Signal<Vec<Message>>,
 }
@@ -44,22 +44,12 @@ struct Conversation<'a> {
 impl<'a> Conversation<'a> {
     pub fn new(ctx: Scope<'a>) -> Self {
         Conversation {
+            id: create_signal(ctx, None),
             topic: create_signal(ctx, "".to_string()),
             chats: create_signal(ctx, Vec::default()),
         }
     }
 }
-
-//#[derive(Debug)]
-//struct Conversations {
-//data: Vec<Conversation>,
-//}
-
-//impl Conversations {
-//pub fn new() -> Self {
-//Conversations { data: Vec::default() }
-//}
-//}
 
 fn markdown_to_html<S: AsRef<str>>(md: S) -> String {
     let p = md::Parser::new(md.as_ref());
@@ -113,35 +103,40 @@ fn ChatCompletion<G: Html>(ctx: Scope) -> View<G> {
 
     let conversation = create_signal(ctx, Conversation::new(ctx));
 
-    conversation.modify().topic.set("knowledge".to_string());
+    console::log_1(&"enter ChatCompletion".into());
+
 
     create_effect(ctx, move || {
         clicked.track();
+        conversation.track();
         sycamore::futures::spawn_local_scoped(ctx, async move {
-            conversation.get().chats.modify().push(Message {
-                role: String::from(<KnownRoles as Into<&str>>::into(KnownRoles::User)),
-                content: {
-                    let q = question.get().to_string();
-                    if q.is_empty() {
-                        return;
-                    }
-                    q
-                },
-            });
+            if conversation.get().id.get().is_none() {
+                console::log_1(&"no id".into());
+                return;
+            }
+
+            console::log_1(&"recompute".into());
+
+            conversation.get().chats.modify().push(Message::new_user({
+                let q = question.get().to_string();
+                if q.is_empty() {
+                    return;
+                }
+                q
+            }));
 
             question.set("".to_string());
             let prompt = conversation.get().chats.get();
-            conversation.get().chats.modify().push(Message {
-                role: String::from(<KnownRoles as Into<&str>>::into(KnownRoles::Assistant)),
-                content: "...".to_string(),
-            });
+            conversation.get().chats.modify().push(Message::new_assistant("...".to_string()));
 
             match serde_wasm_bindgen::to_value(prompt.as_ref()) {
                 Ok(prompt) => {
-                    let msg: Message = match openai_completion(prompt).await {
+                    let id = serde_wasm_bindgen::to_value(conversation.get().id.get().as_ref()).unwrap();
+                    let msg: Message = match openai_completion(id, prompt).await {
                         Ok(msg) => serde_wasm_bindgen::from_value(msg).unwrap(),
                         Err(e) => {
                             console::log_1(&e);
+                            conversation.get().chats.modify().pop();
                             return;
                         }
                     };
@@ -152,15 +147,73 @@ fn ChatCompletion<G: Html>(ctx: Scope) -> View<G> {
                 },
                 Err(e) => {
                     console::log_1(&e.to_string().into());
+                    conversation.get().chats.modify().pop();
                 }
             }
         });
     });
 
+    sycamore::futures::spawn_local_scoped(ctx, async move {
+        match openai_get_conversations().await {
+            Ok(list) => {
+                console::log_1(&list);
+                match serde_wasm_bindgen::from_value::<Vec<ConversationId>>(list) {
+                    Ok(list) => {
+                        if !list.is_empty() {
+                            let id = list.get(0).unwrap();
+                            conversation.get().id.set(Some(*id));
+                            conversation.modify().topic.set("you are a software engineer".to_string());
+
+                            let id = serde_wasm_bindgen::to_value(id).unwrap();
+                            let msgs = openai_get_conversation(id).await.unwrap();
+                            console::log_1(&msgs);
+                            let msgs: Vec<Message> = serde_wasm_bindgen::from_value(msgs).unwrap();
+
+                            conversation.get().chats.set(msgs);
+                        }
+                    },
+                    Err(e) => {
+                        console::log_1(&e.to_string().into());
+                    },
+                }
+            },
+            Err(e) => {
+                console::log_1(&e);
+            }
+        };
+
+        if conversation.get().id.get().is_some() { 
+            return;
+        }
+
+        match openai_start_conversation().await {
+            Ok(id) => {
+                console::log_2(&"created:".into(), &id);
+                match serde_wasm_bindgen::from_value(id) {
+                    Ok(id) => {
+                        conversation.get().id.set(Some(id));
+                        conversation.modify().topic.set("you are a software engineer".to_string());
+                    },
+                    Err(e) => {
+                        console::log_1(&e.to_string().into());
+                    },
+                }
+            }
+            Err(e) => {
+                console::log_1(&e);
+                return;
+            }
+        };
+    });
+
     view! { ctx,
         div(class="flex-1 h-full flex flex-col") {
-            h1(class="title shrink") {
-                "Conversation: " (conversation.get().topic.get().to_string())
+            div(class="title shrink flex flex-row") {
+                h1(class="shrink"){"Conversation: "} 
+                label(class="flex-1 textarea textarea-success mb-2",
+                    placeholder="context prompt") {
+                    (conversation.get().topic.get())
+                }
             }
 
             ul(class="flex-1 flex flex-col my-2 max-h-5/6 overflow-y-scroll") {
@@ -266,8 +319,6 @@ where
 
 #[component]
 fn App<G: Html>(ctx: Scope) -> View<G> {
-    //provide_context(ctx, Conversations::new());
-
     window_event_listener(ctx, "load", || {
         console::log_1(&"loaded".into());
         navigate("/chat");
@@ -319,5 +370,11 @@ fn main() {
 #[wasm_bindgen(module = "/api.js")]
 extern "C" {
     #[wasm_bindgen(js_name = invokeCompletion, catch)]
-    async fn openai_completion(messages: JsValue) -> Result<JsValue, JsValue>;
+    async fn openai_completion(id: JsValue, messages: JsValue) -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(js_name = invokeStartConversation, catch)]
+    async fn openai_start_conversation() -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(js_name = invokeGetConversations, catch)]
+    async fn openai_get_conversations() -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(js_name = invokeGetConversation, catch)]
+    async fn openai_get_conversation(id: JsValue) -> Result<JsValue, JsValue>;
 }

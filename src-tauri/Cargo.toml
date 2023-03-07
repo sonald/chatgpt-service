@@ -25,6 +25,8 @@ rand = "0.8.5"
 thiserror = "1.0.39"
 dashmap = { version = "5.4.0", features = ["serde", "rayon"] }
 common = { path = "../common" }
+uuid = { version = "1.3.0", features = ["v7", "serde", "wasm-bindgen"] }
+getrandom = { version = "0.2.8", features = ["js"] }
 
 
 [features]

@@ -1,9 +1,42 @@
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Message {
     pub role: String,
     pub content: String,
+}
+
+impl Message {
+    pub fn new_user(content: String) -> Self {
+        Message {
+            role: <KnownRoles as Into<&str>>::into(KnownRoles::User).into(),
+            content
+        }
+    }
+
+    pub fn new_system(content: String) -> Self {
+        Message {
+            role: <KnownRoles as Into<&str>>::into(KnownRoles::System).into(),
+            content
+        }
+    }
+
+    pub fn new_assistant(content: String) -> Self {
+        Message {
+            role: <KnownRoles as Into<&str>>::into(KnownRoles::Assistant).into(),
+            content
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ConversationId(pub Uuid);
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Conversation {
+    pub id: ConversationId,
+    pub messages: Vec<Message>
 }
 
 #[derive(Debug, Clone, Copy)]
