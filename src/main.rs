@@ -144,6 +144,8 @@ fn ChatCompletion<G: Html>(ctx: Scope) -> View<G> {
                         assert!(p.role == msg.role);
                         p.content = msg.content;
                     }
+
+                    highlightAll();
                 },
                 Err(e) => {
                     console::log_1(&e.to_string().into());
@@ -170,6 +172,7 @@ fn ChatCompletion<G: Html>(ctx: Scope) -> View<G> {
                             let msgs: Vec<Message> = serde_wasm_bindgen::from_value(msgs).unwrap();
 
                             conversation.get().chats.set(msgs);
+                            highlightAll();
                         }
                     },
                     Err(e) => {
@@ -210,7 +213,7 @@ fn ChatCompletion<G: Html>(ctx: Scope) -> View<G> {
         div(class="flex-1 h-full flex flex-col") {
             div(class="title shrink flex flex-row") {
                 h1(class="shrink"){"Conversation: "} 
-                label(class="flex-1 textarea textarea-success mb-2",
+                label(class="flex-1 badge badge-outline badge-info mb-2",
                     placeholder="context prompt") {
                     (conversation.get().topic.get())
                 }
@@ -377,4 +380,10 @@ extern "C" {
     async fn openai_get_conversations() -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_name = invokeGetConversation, catch)]
     async fn openai_get_conversation(id: JsValue) -> Result<JsValue, JsValue>;
+}
+
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = hljs)]
+    fn highlightAll();
 }
