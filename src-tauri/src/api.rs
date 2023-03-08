@@ -1,6 +1,6 @@
 #![allow(unused)]
 
-use std::sync::{Mutex, Arc};
+use std::{sync::{Mutex, Arc}, path::{Path, PathBuf}};
 
 use lazy_static::lazy_static;
 use config::{Config, ConfigError, File, Environment};
@@ -14,8 +14,10 @@ use serde::{Deserialize, Serialize};
 pub use common::{Message, ConversationId};
 
 use crate::storage::Storage;
-//#[cfg(feature = "local-storage")]
-use crate::storage::local::KVStorage;
+#[cfg(feature = "local-storage")]
+use crate::storage::local::KVStorage as LocalStorage;
+#[cfg(feature = "persist-storage")]
+use crate::storage::disk::KVStorage as DiskStorage;
 
 #[derive(Serialize, Debug)]
 #[allow(unused)]
@@ -70,23 +72,27 @@ pub struct ChatGPT {
 }
 
 impl ChatGPT {
-    pub fn new() -> Self {
-        let settings = ChatGPT::load_settings().unwrap();
+    pub fn new<P: AsRef<Path>>(cfg_path: P) -> Self {
+        let settings = ChatGPT::load_settings(cfg_path.as_ref()).unwrap();
+
         ChatGPT {
             settings,
             rng: Arc::new(Mutex::new(StdRng::from_entropy())),
             cli: reqwest::Client::new(),
 
-            store: Box::new(KVStorage::new())
+            store: Box::new(DiskStorage::new(cfg_path).unwrap())
         }
     }
 
-    fn load_settings() -> Result<Settings, ConfigError> {
+    fn load_settings<P: AsRef<Path>>(cfg_path: P) -> Result<Settings, ConfigError> {
+        let mut fpath = PathBuf::from(cfg_path.as_ref());
+        fpath.push("chatgpt");
+
         let cfg = Config::builder()
             .set_default("model", COMPLETION_MODEL)?
             .set_default("stream", false)?
             .set_default("api_key", "")?
-            .add_source(File::with_name("chatgpt"))
+            .add_source(File::with_name(fpath.as_path().to_str().unwrap()))
             .add_source(Environment::with_prefix("openai"))
             .build()?;
 

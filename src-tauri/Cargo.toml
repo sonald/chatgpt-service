@@ -27,14 +27,16 @@ dashmap = { version = "5.4.0", features = ["serde", "rayon"] }
 common = { path = "../common" }
 uuid = { version = "1.3.0", features = ["v7", "serde", "wasm-bindgen"] }
 getrandom = { version = "0.2.8", features = ["js"] }
+sled = "0.34.7"
+itertools = "0.10.5"
 
 
 [features]
 # by default Tauri runs in production mode
 # when `tauri dev` runs it is executed with `cargo run --no-default-features` if `devPath` is an URL
-default = ["custom-protocol", "local-storage"]
+default = ["custom-protocol", "local-storage", "persist-storage"]
 # this feature is used for production builds where `devPath` points to the filesystem
 # DO NOT remove this
 custom-protocol = ["tauri/custom-protocol"]
 local-storage = []
-remote-storage = []
+persist-storage = []
