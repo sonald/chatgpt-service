@@ -11,21 +11,21 @@ impl Message {
     pub fn new_user(content: String) -> Self {
         Message {
             role: <KnownRoles as Into<&str>>::into(KnownRoles::User).into(),
-            content
+            content,
         }
     }
 
     pub fn new_system(content: String) -> Self {
         Message {
             role: <KnownRoles as Into<&str>>::into(KnownRoles::System).into(),
-            content
+            content,
         }
     }
 
     pub fn new_assistant(content: String) -> Self {
         Message {
             role: <KnownRoles as Into<&str>>::into(KnownRoles::Assistant).into(),
-            content
+            content,
         }
     }
 }
@@ -36,7 +36,7 @@ pub struct ConversationId(pub Uuid);
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Conversation {
     pub id: ConversationId,
-    pub messages: Vec<Message>
+    pub messages: Vec<Message>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -50,11 +50,15 @@ use std::fmt::Display;
 
 impl Display for KnownRoles {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        write!(f, "{}", match self {
-            Self::System => "system",
-            Self::User => "user",
-            Self::Assistant => "assistant",
-        })
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::System => "system",
+                Self::User => "user",
+                Self::Assistant => "assistant",
+            }
+        )
     }
 }
 
@@ -63,7 +67,7 @@ impl From<&str> for KnownRoles {
         match value {
             "system" => Self::System,
             "user" => Self::User,
-            "assistant"=> Self::Assistant,
+            "assistant" => Self::Assistant,
             _ => unreachable!(),
         }
     }

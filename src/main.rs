@@ -5,17 +5,32 @@ use sycamore_router::{navigate, HistoryIntegration, Route, Router};
 use wasm_bindgen::prelude::*;
 use web_sys::{console, window};
 use pulldown_cmark as md;
+use uuid::Uuid;
 
 use common::*;
 
-#[derive(Route)]
+//#[derive(Debug, Route)]
+//enum ChatRoute {
+    //#[to("/<id>")]
+    //Chat {id: String},
+    //#[to("/")]
+    //Index,
+    //#[not_found]
+    //NotFound,
+//}
+
+#[derive(Debug, Route)]
 enum AppRoutes {
     #[to("/")]
     Home,
     #[to("/about")]
     About,
-    #[to("/chat")]
-    ChatCompletion,
+    #[to("/chats/<id..>")]
+    ChatApp { id: Vec<String> },
+    #[to("/codeassist")]
+    CodeAssist,
+    #[to("/game")]
+    TextGame,
     #[not_found]
     NotFound,
 }
@@ -92,30 +107,95 @@ fn Bubble<G: Html>(ctx: Scope, props: BubbleProps) -> View<G> {
                 dangerously_set_inner_html=&html_content) 
             }
         }
+    }
+}
 
+#[derive(Prop)]
+struct ChatAppProps {
+    id: String,
+}
+
+#[component]
+fn ChatApp<G: Html>(ctx: Scope, sub: ChatAppProps) -> View<G> {
+    let conversations: &Signal<Vec<ConversationId>> = create_signal(ctx, vec![]);
+    provide_context_ref(ctx, conversations);
+
+    sycamore::futures::spawn_local_scoped(ctx, async move {
+        match openai_get_conversations().await {
+            Ok(list) => {
+                console::log_2(&"conversations: ".into(), &list);
+                match serde_wasm_bindgen::from_value::<Vec<ConversationId>>(list) {
+                    Ok(list) => { conversations.set(list); },
+                    Err(e) => {
+                        console::log_1(&e.to_string().into());
+                    },
+                }
+            },
+            Err(e) => {
+                console::log_1(&e);
+            }
+        };
+    });
+
+    view! {ctx,
+        div(class="flex-1 flex flex-row") {
+            ChatList {}
+            ChatCompletion(id=sub.id.clone())
+        }
     }
 }
 
 #[component]
-fn ChatCompletion<G: Html>(ctx: Scope) -> View<G> {
+fn ChatList<G: Html>(ctx: Scope) -> View<G> {
+    let conversations = use_context::<Signal<Vec<ConversationId>>>(ctx);
+
+    view! { ctx,
+        div(class="h-full flex flex-col mr-2 min-w-fit") {
+            div(class="title shrink flex flex-row") {
+                h2(class="shrink"){"Conversations"} 
+            }
+
+            ul(class="flex-1 flex flex-col my-2 overflow-y-scroll menu w-40 truncate") {
+                Keyed(iterable=conversations,
+                view=|cx, x| {
+                    view!{cx, 
+                        li(class="truncate"){
+                            a(href=format!("/chats/{}", x.0)){(x.0)}
+                        }
+                    }
+                },
+                key=|x| x.clone())
+            }
+
+            div(class="flex justify-center my-1") {
+                button(class="btn btn-success btn-circle", on:click=|_| {
+                    console::log_1(&"new clicked".into());
+                    navigate("/chats/");
+                }) {
+                    "+"
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn ChatCompletion<G: Html>(ctx: Scope, props: ChatAppProps) -> View<G> {
     let question = create_signal(ctx, "".to_string());
     let clicked = create_signal(ctx, ());
 
     let conversation = create_signal(ctx, Conversation::new(ctx));
+    let conversations = use_context::<Signal<Vec<ConversationId>>>(ctx);
 
     console::log_1(&"enter ChatCompletion".into());
-
 
     create_effect(ctx, move || {
         clicked.track();
         conversation.track();
         sycamore::futures::spawn_local_scoped(ctx, async move {
             if conversation.get().id.get().is_none() {
-                console::log_1(&"no id".into());
                 return;
             }
-
-            console::log_1(&"recompute".into());
 
             conversation.get().chats.modify().push(Message::new_user({
                 let q = question.get().to_string();
@@ -155,40 +235,40 @@ fn ChatCompletion<G: Html>(ctx: Scope) -> View<G> {
         });
     });
 
+    let id = props.id.clone();
     sycamore::futures::spawn_local_scoped(ctx, async move {
-        match openai_get_conversations().await {
-            Ok(list) => {
-                console::log_1(&list);
-                match serde_wasm_bindgen::from_value::<Vec<ConversationId>>(list) {
-                    Ok(list) => {
-                        if !list.is_empty() {
-                            let id = list.get(0).unwrap();
-                            conversation.get().id.set(Some(*id));
-                            conversation.modify().topic.set("you are a software engineer".to_string());
+        if id.len() > 0 {
+            let cid = ConversationId(Uuid::parse_str(&id).expect("uuid"));
+            conversation.get().id.set(Some(cid));
+            conversation.modify().topic.set("you are a software engineer".to_string());
 
-                            let id = serde_wasm_bindgen::to_value(id).unwrap();
-                            let msgs = openai_get_conversation(id).await.unwrap();
-                            console::log_1(&msgs);
-                            let msgs: Vec<Message> = serde_wasm_bindgen::from_value(msgs).unwrap();
-
-                            conversation.get().chats.set(msgs);
-                            highlightAll();
-                        }
-                    },
-                    Err(e) => {
-                        console::log_1(&e.to_string().into());
-                    },
+            let id = match serde_wasm_bindgen::to_value(&cid) {
+                Ok(id) => id,
+                Err(e) => {
+                    console::log_1(&e.to_string().into());
+                    return;
                 }
-            },
-            Err(e) => {
-                console::log_1(&e);
-            }
-        };
+            };
 
-        if conversation.get().id.get().is_some() { 
+            let msgs = openai_get_conversation(id).await.unwrap();
+            //console::log_1(&msgs);
+            let msgs: Vec<Message> = serde_wasm_bindgen::from_value(msgs).unwrap();
+            conversation.get().chats.set(msgs);
+            highlightAll();
+
+            if conversation.get().id.get().is_some() { 
+                return;
+            }
+
+            return
+        }
+
+        if conversations.get().len() > 0 {
+            console::log_1(&"load existing conversation".into());
             return;
         }
 
+        console::log_1(&"start conversation".into());
         match openai_start_conversation().await {
             Ok(id) => {
                 console::log_2(&"created:".into(), &id);
@@ -269,16 +349,18 @@ fn Header<G: Html>(ctx: Scope) -> View<G> {
                 label(tabindex="0", class="btn btn-ghost bg-red-200 btn-circle") {
                     "M"
                 }
-                ul(tabindex="0", class="menu menu-compat dropdown-content mt-3 p-2 shadow rounded-md bg-slate-700") {
+                ul(tabindex="0", class="menu menu-compat dropdown-content mt-3 p-2 shadow rounded-md bg-base-100") {
                     li{a(href="/"){"Home"}}
-                    li{a(href="/chat"){"Chat"}}
+                    li{a(href="/chats"){"Chats"}}
+                    li{a(href="/codeassist"){"CodeAssist"}}
+                    li{a(href="/game"){"Game"}}
                     li{a(href="/about"){"About"}}
                 }
             }
         }
 
         div(class="navbar-center") {
-            "AI"
+            "Toolbox"
         }
 
         div(class="navbar-end") {
@@ -289,21 +371,6 @@ fn Header<G: Html>(ctx: Scope) -> View<G> {
     }
 }
 
-#[component]
-fn Side<G: Html>(ctx: Scope) -> View<G> {
-    view! {
-        ctx,
-        div(class="drawer-mobile h-full w-40 shrink") {
-            div(class="drawer-side") {
-                ul(class="menu h-full p-4 w-40 bg-slate-700 text-base-content") {
-                    li{a(href="/"){"Home"}}
-                    li{a(href="/chat"){"Chat"}}
-                    li{a(href="/about"){"About"}}
-                }
-            }
-        }
-    }
-}
 
 fn window_event_listener<'a, F>(ctx: Scope<'a>, ev: &str, f: F)
 where
@@ -324,7 +391,7 @@ where
 fn App<G: Html>(ctx: Scope) -> View<G> {
     window_event_listener(ctx, "load", || {
         console::log_1(&"loaded".into());
-        navigate("/chat");
+        navigate("/chats");
     });
 
     window_event_listener(ctx, "resize", || {
@@ -336,18 +403,21 @@ fn App<G: Html>(ctx: Scope) -> View<G> {
             Header()
 
             div(class="flex-1 flex flex-row overflow-y-auto h-full") {
-                Side()
-
                 Router(integration=HistoryIntegration::new(),
                     view=|cx, route: &ReadSignal<AppRoutes>| {
+                        console::log_1(&format!("route - {:?}", route.get()).into());
+
                         view! { cx,
                             div(class="app flex-1 flex m-4") {
                                 (match route.get().as_ref() {
-                                    AppRoutes::ChatCompletion => view!{cx, ChatCompletion},
+                                    AppRoutes::ChatApp {id} => {
+                                        view!{cx, ChatApp(id=id.first().map(|r|r.clone()).unwrap_or("".to_string()))}
+                                    },
                                     AppRoutes::About => view!{cx, About},
                                     AppRoutes::Home => view!{cx, Home},
+                                    AppRoutes::TextGame => view!{cx, NotFound},
+                                    AppRoutes::CodeAssist => view!{cx, NotFound},
                                     AppRoutes::NotFound => view!{cx, NotFound},
-
                                 })
                             }
                         }
@@ -386,4 +456,5 @@ extern "C" {
 extern "C" {
     #[wasm_bindgen(js_namespace = hljs)]
     fn highlightAll();
+    fn highlightAuto(html: JsValue) -> JsValue;
 }
