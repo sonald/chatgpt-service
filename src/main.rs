@@ -121,6 +121,8 @@ fn ChatApp<G: Html>(ctx: Scope, sub: ChatAppProps) -> View<G> {
     provide_context_ref(ctx, conversations);
     let conversations_loaded = create_signal(ctx, false);
     provide_context_ref(ctx, conversations_loaded);
+    let request_new_conversation = create_signal(ctx, ());
+    provide_context_ref(ctx, request_new_conversation);
 
     sycamore::futures::spawn_local_scoped(ctx, async move {
         match openai_get_conversations().await {
@@ -153,6 +155,7 @@ fn ChatApp<G: Html>(ctx: Scope, sub: ChatAppProps) -> View<G> {
 #[component]
 fn ChatList<G: Html>(ctx: Scope) -> View<G> {
     let conversations = use_context::<Signal<Vec<ConversationId>>>(ctx);
+    let request_new_conversation = use_context::<Signal<()>>(ctx);
 
     view! { ctx,
         div(class="h-full flex flex-col mr-2 min-w-fit") {
@@ -175,7 +178,7 @@ fn ChatList<G: Html>(ctx: Scope) -> View<G> {
             div(class="flex justify-center my-1") {
                 button(class="btn btn-success btn-circle", on:click=|_| {
                     console::log_1(&"new clicked".into());
-                    navigate("/chats/");
+                    request_new_conversation.set(());
                 }) {
                     "+"
                 }
@@ -232,9 +235,12 @@ async fn check_start_conversation<'a>(conversation: &'a Signal<Conversation<'a>>
         Ok(id) => {
             console::log_2(&"created:".into(), &id);
             match serde_wasm_bindgen::from_value(id) {
-                Ok(id) => {
-                    conversation.get().id.set(Some(id));
-                    conversation.modify().topic.set("you are a software engineer".to_string());
+                Ok(cid) => {
+                    conversation.get().id.set(Some(cid));
+                    conversation.get().topic.set("you are a software engineer".to_string());
+                    conversation.get().chats.modify().clear();
+
+                    navigate(&format!("/chats/{}", cid.0));
                 },
                 Err(e) => {
                     console::log_1(&e.to_string().into());
@@ -261,7 +267,13 @@ async fn load_conversation<'a>(cid: ConversationId, conversation: &'a Signal<Con
         }
     };
 
-    let msgs = openai_get_conversation(id).await.unwrap();
+    let msgs = match openai_get_conversation(id).await {
+        Ok(msgs) => msgs,
+        Err(e) => {
+            console::log_1(&e);
+            return;
+        }
+    };
     console::log_1(&msgs);
     let msgs: Vec<Message> = serde_wasm_bindgen::from_value(msgs).unwrap();
     conversation.get().chats.set(msgs);
@@ -276,14 +288,26 @@ fn ChatCompletion<G: Html>(ctx: Scope, props: ChatAppProps) -> View<G> {
     let conversation = create_signal(ctx, Conversation::new(ctx));
     let conversations = use_context::<Signal<Vec<ConversationId>>>(ctx);
     let conversations_loaded = use_context::<Signal<bool>>(ctx);
+    let request_new_conversation = use_context::<Signal<()>>(ctx);
 
     create_effect(ctx, move || {
         clicked.track();
         conversation.track();
-        question.track();
 
         sycamore::futures::spawn_local_scoped(ctx, async move {
             continue_conversation(conversation, question).await;
+        });
+    });
+
+    create_effect(ctx, move || {
+        request_new_conversation.track();
+        if !conversations_loaded.get_untracked().as_ref() {
+            return;
+        }
+        console::log_1(&"request_new_conversation".into());
+
+        sycamore::futures::spawn_local_scoped(ctx, async move {
+            check_start_conversation(conversation).await;
         });
     });
 

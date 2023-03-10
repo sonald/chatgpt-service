@@ -6,6 +6,8 @@ pub trait Storage {
         let id = ConversationId(Uuid::new_v4());
         if let Some(ctx) = ctx {
             self.store_message(id, Message::new_system(ctx));
+        } else {
+            self.store_message(id, Message::new_system("act as a general chat.".into()));
         }
 
         id
@@ -45,7 +47,7 @@ pub mod local {
 
         fn store_conversation(&self, id: ConversationId, msgs: Vec<Message>) -> Result<(), String> {
             let mut chats = self.data.entry(id).or_default();
-            let _ = std::mem::replace(chats.value_mut(), msgs);
+            *chats.value_mut() = msgs;
 
             Ok(())
         }
@@ -108,13 +110,14 @@ pub mod disk {
     impl Storage for KVStorage {
         fn store_message(&self, id: ConversationId, msg: Message) {
             self.db
-                .fetch_and_update(&id.0, |old| match old {
-                    Some(old) => {
-                        let mut msgs: MessageList = IVec::from(old).try_into().unwrap();
-                        msgs.0.push(msg.clone());
-                        Some::<Vec<u8>>(msgs.try_into().unwrap())
+                .fetch_and_update(&id.0, |old| {
+                    let mut msgs = MessageList(vec![]);
+                    match old {
+                        Some(old) => { msgs = IVec::from(old).try_into().unwrap(); }
+                        None => {},
                     }
-                    None => None,
+                    msgs.0.push(msg.clone());
+                    Some::<Vec<u8>>(msgs.try_into().unwrap())
                 })
                 .unwrap();
         }

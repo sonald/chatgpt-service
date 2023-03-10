@@ -80,8 +80,18 @@ impl ChatGPT {
             rng: Arc::new(Mutex::new(StdRng::from_entropy())),
             cli: reqwest::Client::new(),
 
-            store: Box::new(DiskStorage::new(cfg_path).unwrap())
+            store: Self::get_store(cfg_path), 
         }
+    }
+
+    #[cfg(feature = "persist-storage")]
+    fn get_store<P: AsRef<Path>>(cfg_path: P) -> Box<dyn Storage + Send + Sync> {
+        Box::new(DiskStorage::new(cfg_path).unwrap())
+    }
+
+    #[cfg(all(feature = "local-storage", not(feature = "persist-storage")))]
+    fn get_store<P: AsRef<Path>>(cfg_path: P) -> Box<dyn Storage + Send + Sync> {
+        Box::new(LocalStorage::new())
     }
 
     fn load_settings<P: AsRef<Path>>(cfg_path: P) -> Result<Settings, ConfigError> {
