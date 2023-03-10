@@ -119,13 +119,18 @@ struct ChatAppProps {
 fn ChatApp<G: Html>(ctx: Scope, sub: ChatAppProps) -> View<G> {
     let conversations: &Signal<Vec<ConversationId>> = create_signal(ctx, vec![]);
     provide_context_ref(ctx, conversations);
+    let conversations_loaded = create_signal(ctx, false);
+    provide_context_ref(ctx, conversations_loaded);
 
     sycamore::futures::spawn_local_scoped(ctx, async move {
         match openai_get_conversations().await {
             Ok(list) => {
                 console::log_2(&"conversations: ".into(), &list);
                 match serde_wasm_bindgen::from_value::<Vec<ConversationId>>(list) {
-                    Ok(list) => { conversations.set(list); },
+                    Ok(list) => {
+                        conversations.set(list); 
+                        conversations_loaded.set(true);
+                    },
                     Err(e) => {
                         console::log_1(&e.to_string().into());
                     },
@@ -179,6 +184,90 @@ fn ChatList<G: Html>(ctx: Scope) -> View<G> {
     }
 }
 
+async fn continue_conversation<'a>(conversation: &'a Signal<Conversation<'a>>, question: &'a Signal<String>) {
+    if conversation.get().id.get().is_none() {
+        return;
+    }
+
+    conversation.get().chats.modify().push(Message::new_user({
+        let q = question.get().to_string();
+        if q.is_empty() {
+            return;
+        }
+        q
+    }));
+
+    question.set("".to_string());
+    let prompt = conversation.get().chats.get();
+    conversation.get().chats.modify().push(Message::new_assistant("...".to_string()));
+
+    match serde_wasm_bindgen::to_value(prompt.as_ref()) {
+        Ok(prompt) => {
+            let id = serde_wasm_bindgen::to_value(conversation.get().id.get().as_ref()).unwrap();
+            let msg: Message = match openai_completion(id, prompt).await {
+                Ok(msg) => serde_wasm_bindgen::from_value(msg).unwrap(),
+                Err(e) => {
+                    console::log_1(&e);
+                    conversation.get().chats.modify().pop();
+                    return;
+                }
+            };
+            if let Some(p) = conversation.get().chats.modify().last_mut() {
+                assert!(p.role == msg.role);
+                p.content = msg.content;
+            }
+
+            highlightAll();
+        },
+        Err(e) => {
+            console::log_1(&e.to_string().into());
+            conversation.get().chats.modify().pop();
+        }
+    }
+}
+
+async fn check_start_conversation<'a>(conversation: &'a Signal<Conversation<'a>>) {
+    console::log_1(&"start conversation".into());
+    match openai_start_conversation().await {
+        Ok(id) => {
+            console::log_2(&"created:".into(), &id);
+            match serde_wasm_bindgen::from_value(id) {
+                Ok(id) => {
+                    conversation.get().id.set(Some(id));
+                    conversation.modify().topic.set("you are a software engineer".to_string());
+                },
+                Err(e) => {
+                    console::log_1(&e.to_string().into());
+                },
+            }
+        }
+        Err(e) => {
+            console::log_1(&e);
+            return;
+        }
+    };
+}
+
+async fn load_conversation<'a>(cid: ConversationId, conversation: &'a Signal<Conversation<'a>>) {
+    console::log_1(&format!("load conversation {:?}", cid).into());
+
+    conversation.get().id.set(Some(cid));
+
+    let id = match serde_wasm_bindgen::to_value(&cid) {
+        Ok(id) => id,
+        Err(e) => {
+            console::log_1(&e.to_string().into());
+            return;
+        }
+    };
+
+    let msgs = openai_get_conversation(id).await.unwrap();
+    console::log_1(&msgs);
+    let msgs: Vec<Message> = serde_wasm_bindgen::from_value(msgs).unwrap();
+    conversation.get().chats.set(msgs);
+    highlightAll();
+}
+
 #[component]
 fn ChatCompletion<G: Html>(ctx: Scope, props: ChatAppProps) -> View<G> {
     let question = create_signal(ctx, "".to_string());
@@ -186,108 +275,42 @@ fn ChatCompletion<G: Html>(ctx: Scope, props: ChatAppProps) -> View<G> {
 
     let conversation = create_signal(ctx, Conversation::new(ctx));
     let conversations = use_context::<Signal<Vec<ConversationId>>>(ctx);
-
-    console::log_1(&"enter ChatCompletion".into());
+    let conversations_loaded = use_context::<Signal<bool>>(ctx);
 
     create_effect(ctx, move || {
         clicked.track();
         conversation.track();
+        question.track();
+
         sycamore::futures::spawn_local_scoped(ctx, async move {
-            if conversation.get().id.get().is_none() {
-                return;
-            }
-
-            conversation.get().chats.modify().push(Message::new_user({
-                let q = question.get().to_string();
-                if q.is_empty() {
-                    return;
-                }
-                q
-            }));
-
-            question.set("".to_string());
-            let prompt = conversation.get().chats.get();
-            conversation.get().chats.modify().push(Message::new_assistant("...".to_string()));
-
-            match serde_wasm_bindgen::to_value(prompt.as_ref()) {
-                Ok(prompt) => {
-                    let id = serde_wasm_bindgen::to_value(conversation.get().id.get().as_ref()).unwrap();
-                    let msg: Message = match openai_completion(id, prompt).await {
-                        Ok(msg) => serde_wasm_bindgen::from_value(msg).unwrap(),
-                        Err(e) => {
-                            console::log_1(&e);
-                            conversation.get().chats.modify().pop();
-                            return;
-                        }
-                    };
-                    if let Some(p) = conversation.get().chats.modify().last_mut() {
-                        assert!(p.role == msg.role);
-                        p.content = msg.content;
-                    }
-
-                    highlightAll();
-                },
-                Err(e) => {
-                    console::log_1(&e.to_string().into());
-                    conversation.get().chats.modify().pop();
-                }
-            }
+            continue_conversation(conversation, question).await;
         });
     });
 
     let id = props.id.clone();
-    sycamore::futures::spawn_local_scoped(ctx, async move {
-        if id.len() > 0 {
+    if id.is_empty() {
+        // enter with empty state
+        create_effect(ctx, move || {
+            if !conversations_loaded.get().as_ref() {
+                return;
+            }
+            sycamore::futures::spawn_local_scoped(ctx, async move {
+                if conversations.get().is_empty() {
+                    check_start_conversation(conversation).await;
+                } else {
+                    let id = conversations.get().first().unwrap().clone();
+                    console::log_1(&format!("load existing conversation {:?}", id).into());
+                    load_conversation(id, conversation).await;
+                }
+            });
+        });
+
+    } else {
+        sycamore::futures::spawn_local_scoped(ctx, async move {
             let cid = ConversationId(Uuid::parse_str(&id).expect("uuid"));
-            conversation.get().id.set(Some(cid));
-            conversation.modify().topic.set("you are a software engineer".to_string());
-
-            let id = match serde_wasm_bindgen::to_value(&cid) {
-                Ok(id) => id,
-                Err(e) => {
-                    console::log_1(&e.to_string().into());
-                    return;
-                }
-            };
-
-            let msgs = openai_get_conversation(id).await.unwrap();
-            //console::log_1(&msgs);
-            let msgs: Vec<Message> = serde_wasm_bindgen::from_value(msgs).unwrap();
-            conversation.get().chats.set(msgs);
-            highlightAll();
-
-            if conversation.get().id.get().is_some() { 
-                return;
-            }
-
-            return
-        }
-
-        if conversations.get().len() > 0 {
-            console::log_1(&"load existing conversation".into());
-            return;
-        }
-
-        console::log_1(&"start conversation".into());
-        match openai_start_conversation().await {
-            Ok(id) => {
-                console::log_2(&"created:".into(), &id);
-                match serde_wasm_bindgen::from_value(id) {
-                    Ok(id) => {
-                        conversation.get().id.set(Some(id));
-                        conversation.modify().topic.set("you are a software engineer".to_string());
-                    },
-                    Err(e) => {
-                        console::log_1(&e.to_string().into());
-                    },
-                }
-            }
-            Err(e) => {
-                console::log_1(&e);
-                return;
-            }
-        };
-    });
+            load_conversation(cid, conversation).await;
+        });
+    }
 
     view! { ctx,
         div(class="flex-1 h-full flex flex-col") {
