@@ -6,18 +6,15 @@ use wasm_bindgen::prelude::*;
 use web_sys::{console, window};
 use pulldown_cmark as md;
 use uuid::Uuid;
+use tracing::{debug, info};
 
 use common::*;
 
-//#[derive(Debug, Route)]
-//enum ChatRoute {
-    //#[to("/<id>")]
-    //Chat {id: String},
-    //#[to("/")]
-    //Index,
-    //#[not_found]
-    //NotFound,
-//}
+macro_rules! wasm_log {
+    ( $($t:tt)* ) => {
+        console::log_1( &format!( $($t)*) .into() )
+    }
+}
 
 #[derive(Debug, Route)]
 enum AppRoutes {
@@ -134,12 +131,12 @@ fn ChatApp<G: Html>(ctx: Scope, sub: ChatAppProps) -> View<G> {
                         conversations_loaded.set(true);
                     },
                     Err(e) => {
-                        console::log_1(&e.to_string().into());
+                        wasm_log!("{:?}", e);
                     },
                 }
             },
             Err(e) => {
-                console::log_1(&e);
+                wasm_log!("{:?}", e);
             }
         };
     });
@@ -177,7 +174,7 @@ fn ChatList<G: Html>(ctx: Scope) -> View<G> {
 
             div(class="flex justify-center my-1") {
                 button(class="btn btn-success btn-circle", on:click=|_| {
-                    console::log_1(&"new clicked".into());
+                    wasm_log!("new clicked");
                     request_new_conversation.set(());
                 }) {
                     "+"
@@ -210,7 +207,7 @@ async fn continue_conversation<'a>(conversation: &'a Signal<Conversation<'a>>, q
             let msg: Message = match openai_completion(id, prompt).await {
                 Ok(msg) => serde_wasm_bindgen::from_value(msg).unwrap(),
                 Err(e) => {
-                    console::log_1(&e);
+                    wasm_log!("{:?}", e);
                     conversation.get().chats.modify().pop();
                     return;
                 }
@@ -223,14 +220,14 @@ async fn continue_conversation<'a>(conversation: &'a Signal<Conversation<'a>>, q
             highlightAll();
         },
         Err(e) => {
-            console::log_1(&e.to_string().into());
+            wasm_log!("{:?}", e);
             conversation.get().chats.modify().pop();
         }
     }
 }
 
 async fn check_start_conversation<'a>(conversation: &'a Signal<Conversation<'a>>) {
-    console::log_1(&"start conversation".into());
+    wasm_log!("start conversation");
     match openai_start_conversation().await {
         Ok(id) => {
             console::log_2(&"created:".into(), &id);
@@ -243,26 +240,26 @@ async fn check_start_conversation<'a>(conversation: &'a Signal<Conversation<'a>>
                     navigate(&format!("/chats/{}", cid.0));
                 },
                 Err(e) => {
-                    console::log_1(&e.to_string().into());
+                    wasm_log!("{}", e.to_string());
                 },
             }
         }
         Err(e) => {
-            console::log_1(&e);
+            wasm_log!("{:?}", e);
             return;
         }
     };
 }
 
 async fn load_conversation<'a>(cid: ConversationId, conversation: &'a Signal<Conversation<'a>>) {
-    console::log_1(&format!("load conversation {:?}", cid).into());
+    wasm_log!("load conversation {:?}", cid);
 
     conversation.get().id.set(Some(cid));
 
     let id = match serde_wasm_bindgen::to_value(&cid) {
         Ok(id) => id,
         Err(e) => {
-            console::log_1(&e.to_string().into());
+            wasm_log!("{:?}", e);
             return;
         }
     };
@@ -270,11 +267,11 @@ async fn load_conversation<'a>(cid: ConversationId, conversation: &'a Signal<Con
     let msgs = match openai_get_conversation(id).await {
         Ok(msgs) => msgs,
         Err(e) => {
-            console::log_1(&e);
+            wasm_log!("{:?}", e);
             return;
         }
     };
-    console::log_1(&msgs);
+    //wasm_log!("{:?}", msgs);
     let msgs: Vec<Message> = serde_wasm_bindgen::from_value(msgs).unwrap();
     conversation.get().chats.set(msgs);
     highlightAll();
@@ -290,6 +287,8 @@ fn ChatCompletion<G: Html>(ctx: Scope, props: ChatAppProps) -> View<G> {
     let conversations_loaded = use_context::<Signal<bool>>(ctx);
     let request_new_conversation = use_context::<Signal<()>>(ctx);
 
+    debug!("ChatCompletion build");
+
     create_effect(ctx, move || {
         clicked.track();
         conversation.track();
@@ -304,7 +303,7 @@ fn ChatCompletion<G: Html>(ctx: Scope, props: ChatAppProps) -> View<G> {
         if !conversations_loaded.get_untracked().as_ref() {
             return;
         }
-        console::log_1(&"request_new_conversation".into());
+        wasm_log!("request_new_conversation");
 
         sycamore::futures::spawn_local_scoped(ctx, async move {
             check_start_conversation(conversation).await;
@@ -323,7 +322,7 @@ fn ChatCompletion<G: Html>(ctx: Scope, props: ChatAppProps) -> View<G> {
                     check_start_conversation(conversation).await;
                 } else {
                     let id = conversations.get().first().unwrap().clone();
-                    console::log_1(&format!("load existing conversation {:?}", id).into());
+                    wasm_log!("load existing conversation {:?}", id);
                     load_conversation(id, conversation).await;
                 }
             });
@@ -366,13 +365,14 @@ fn ChatCompletion<G: Html>(ctx: Scope, props: ChatAppProps) -> View<G> {
                 key=|x| x.clone())
             }
 
-            textarea(class="textarea textarea-info mb-2", placeholder="type here", bind:value=question)
-
-            button(class="btn btn-info", on:click=|_| {
-                console::log_1(&"clicked".into());
-                clicked.set(());
-            }) {
-                "talk"
+            div(class="relative mb-2") {
+                div(class="absolute top-3 right-2") {
+                    button(class="btn btn-info btn-circle ", on:click=|_| {
+                        wasm_log!("clicked");
+                        clicked.set(());
+                    }) { "S" }
+                }
+                textarea(class="textarea textarea-info w-full", placeholder="ask your question...", bind:value=question)
             }
         }
     }
@@ -437,12 +437,12 @@ where
 #[component]
 fn App<G: Html>(ctx: Scope) -> View<G> {
     window_event_listener(ctx, "load", || {
-        console::log_1(&"loaded".into());
+        wasm_log!("loaded");
         navigate("/chats");
     });
 
     window_event_listener(ctx, "resize", || {
-        console::log_1(&"resized".into());
+        wasm_log!("resized");
     });
 
     view! { ctx,
@@ -452,7 +452,7 @@ fn App<G: Html>(ctx: Scope) -> View<G> {
             div(class="flex-1 flex flex-row overflow-y-auto h-full") {
                 Router(integration=HistoryIntegration::new(),
                     view=|cx, route: &ReadSignal<AppRoutes>| {
-                        console::log_1(&format!("route - {:?}", route.get()).into());
+                        wasm_log!("route - {:?}", route.get());
 
                         view! { cx,
                             div(class="app flex-1 flex m-4") {
@@ -478,7 +478,14 @@ fn App<G: Html>(ctx: Scope) -> View<G> {
 }
 
 fn main() {
-    tracing_wasm::set_as_global_default();
+    console_error_panic_hook::set_once();
+    use tracing_wasm::*;
+    let config = WASMLayerConfigBuilder::default()
+        .set_max_level(tracing::Level::TRACE)
+        .set_console_config(ConsoleConfig::ReportWithConsoleColor)
+        .build();
+    set_as_global_default_with_config(config);
+    debug!("start");
 
     sycamore::render(|ctx| {
         view! { ctx,
