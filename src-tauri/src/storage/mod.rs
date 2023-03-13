@@ -13,6 +13,9 @@ pub trait Storage {
         id
     }
 
+    fn store_title(&self, id: ConversationId, msg: String) -> Result<(), String>;
+    fn get_title(&self, id: ConversationId) -> Option<String>;
+
     fn store_message(&self, id: ConversationId, msg: Message);
     // replace whole conversation
     fn store_conversation(&self, id: ConversationId, msgs: Vec<Message>) -> Result<(), String>;
@@ -29,12 +32,14 @@ pub mod local {
     #[derive(Debug)]
     pub struct KVStorage {
         data: DashMap<ConversationId, Vec<Message>>,
+        titles: DashMap<ConversationId, String>,
     }
 
     impl KVStorage {
         pub fn new() -> Self {
             KVStorage {
                 data: DashMap::new(),
+                titles: DashMap::new(),
             }
         }
     }
@@ -61,6 +66,15 @@ pub mod local {
 
         fn get_conversations(&self) -> Result<Vec<ConversationId>, String> {
             Ok(self.data.iter().map(|v| *v.key()).collect::<Vec<_>>())
+        }
+
+        fn store_title(&self, id: ConversationId, msg: String) -> Result<(), String> {
+            self.titles.entry(id).or_insert(msg);
+            Ok(())
+        }
+
+        fn get_title(&self, id: ConversationId) -> Option<String> {
+            self.titles.get(&id).map(|kv| kv.value().clone())
         }
     }
 }
@@ -147,6 +161,26 @@ pub mod disk {
                 .map_ok(|k| ConversationId(Uuid::from_slice(&k).unwrap()))
                 .try_collect::<_, Vec<_>, _>()
                 .map_err(|e| e.to_string())
+        }
+
+        fn store_title(&self, id: ConversationId, msg: String) -> Result<(), String> {
+            let title_key = format!("{}:title", id.0);
+
+            self.db
+                .insert(&title_key, msg.as_bytes())
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+        }
+
+        fn get_title(&self, id: ConversationId) -> Option<String> {
+            let title_key = format!("{}:title", id.0);
+            self.db
+                .get(&title_key)
+                .transpose()
+                .map(|v| {
+                    v.map(|v| String::from_utf8_lossy(v.as_ref()).into_owned())
+                        .unwrap_or("".to_string())
+                })
         }
     }
 }

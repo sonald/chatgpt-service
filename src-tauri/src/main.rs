@@ -35,6 +35,31 @@ fn get_conversation<'r>(
     state.get_conversation(id)
 }
 
+#[tauri::command]
+fn get_title<'r>(
+    id: ConversationId,
+    state: tauri::State<'r, api::ChatGPT>,
+) -> Result<String, String> {
+    state.get_title(id)
+}
+
+#[tauri::command]
+fn set_title<'r>(
+    id: ConversationId,
+    title: String,
+    state: tauri::State<'r, api::ChatGPT>,
+) -> Result<(), String> {
+    state.set_title(id, title)
+}
+
+#[tauri::command]
+async fn suggest_title<'r>(
+    id: ConversationId,
+    state: tauri::State<'r, api::ChatGPT>,
+) -> Result<String, String> {
+    state.suggest_title(id).await
+}
+
 use tauri::Manager;
 fn main() {
     tauri::Builder::default()
@@ -50,7 +75,10 @@ fn main() {
             completion,
             start_conversation,
             get_conversations,
-            get_conversation
+            get_conversation,
+            get_title,
+            set_title,
+            suggest_title,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

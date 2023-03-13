@@ -36,6 +36,7 @@ pub struct ConversationId(pub Uuid);
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Conversation {
     pub id: ConversationId,
+    pub title: String,
     pub messages: Vec<Message>,
 }
 

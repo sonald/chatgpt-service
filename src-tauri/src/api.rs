@@ -133,11 +133,37 @@ impl ChatGPT {
         self.store.get_conversation(id)
     }
 
-    pub async fn chat_completion(&self, id: ConversationId, mut messages: Vec<Message>) -> Result<Message, String> {
+    pub fn get_title(&self, id: ConversationId) -> Result<String, String> {
+        self.store.get_title(id).ok_or("no title".to_string())
+    }
+
+    pub fn set_title(&self, id: ConversationId, title: String) -> Result<(), String> {
+        self.store.store_title(id, title)
+    }
+
+    pub async fn suggest_title(&self, id: ConversationId) -> Result<String, String> {
+        eprintln!("suggest_title({:?})", id);
+        let msgs = self.store.get_conversation(id).and_then(|dialogue| {
+            let dialogue = dialogue.into_iter().take(6).map(|msg| msg.content).collect::<Vec<_>>().join("\n");
+
+            Ok(vec! {
+                Message::new_system("Act as a summarizer and summarize this dialogue".to_string()),
+                Message::new_user(dialogue),
+            })
+        });
+
+        match msgs {
+            Ok(msgs) => self.generate_completion(msgs).await.map(|msg| { msg.content }),
+            Err(e) => Err(e),
+        }
+    }
+
+    //FIXME: what if tokens in `messages` exceed 4096
+    pub async fn generate_completion(&self, mut messages: Vec<Message>) -> Result<Message, String> {
         let data = Params {
             model: &self.settings.model,
             temperature: self.settings.temperature,
-            messages: messages.clone(),
+            messages,
             stream: self.settings.stream,
         };
 
@@ -177,18 +203,23 @@ impl ChatGPT {
         let data = resp.bytes().await.unwrap();
         eprintln!("data: {}", String::from_utf8_lossy(&data));
         match serde_json::from_slice::<Answer>(&data) {
-        //match resp.json::<Answer>().await {
             Ok(result) => {
-                messages.push(result.choices[0].message.clone());
-                self.store.store_conversation(id, messages).unwrap();
-
                 Ok(result.choices[0].message.clone())
             },
             Err(err) => {
-                eprintln!("{:?}", err);
+                eprintln!("answer: {:?}", err);
                 Err(err.to_string())
             }
         }
+    }
+
+
+    pub async fn chat_completion(&self, id: ConversationId, mut messages: Vec<Message>) -> Result<Message, String> {
+        self.generate_completion(messages.clone()).await.and_then(|msg| {
+            messages.push(msg.clone());
+            self.store.store_conversation(id, messages).unwrap();
+            Ok(msg)
+        })
     }
 }
 
