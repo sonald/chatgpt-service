@@ -147,13 +147,17 @@ impl ChatGPT {
             let dialogue = dialogue.into_iter().take(6).map(|msg| msg.content).collect::<Vec<_>>().join("\n");
 
             Ok(vec! {
-                Message::new_system("Act as a summarizer and summarize this dialogue".to_string()),
+                Message::new_system("Act as a summarizer and summarize this conversation".to_string()),
                 Message::new_user(dialogue),
             })
         });
 
         match msgs {
-            Ok(msgs) => self.generate_completion(msgs).await.map(|msg| { msg.content }),
+            Ok(msgs) => {
+                self.generate_completion(msgs).await.map(|msg| {
+                    msg.content.chars().take(64).collect::<String>()
+                })
+            },
             Err(e) => Err(e),
         }
     }

@@ -27,3 +27,4 @@ export async function invokeSetTitle(id, title) {
 export async function invokeSuggestTitle(id) {
     return await invoke("suggest_title", {id});
 }
+

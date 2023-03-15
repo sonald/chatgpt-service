@@ -5,6 +5,7 @@
 
 use chatgpt_backend::api;
 use common::ConversationId;
+use tauri::{CustomMenuItem, Manager, Menu, Submenu, WindowMenuEvent};
 
 #[tauri::command]
 async fn completion<'r>(
@@ -60,7 +61,24 @@ async fn suggest_title<'r>(
     state.suggest_title(id).await
 }
 
-use tauri::Manager;
+fn build_menu() -> Menu {
+    let chats = CustomMenuItem::new("id_chats", "Chat");
+    let coding = CustomMenuItem::new("id_coding", "Coding");
+
+    let sub = Menu::new().add_item(chats).add_item(coding);
+    let chatgpt = Submenu::new("GPT", sub);
+    Menu::os_default("chatgpt").add_submenu(chatgpt)
+}
+
+fn handle_menu_event(e: WindowMenuEvent) {
+    eprintln!("menu: {}", e.menu_item_id());
+    match e.menu_item_id() {
+        "id_chats" => {}
+        "id_coding" => {}
+        _ => unreachable!(),
+    }
+}
+
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
@@ -68,7 +86,11 @@ fn main() {
             let cfg = tauri::api::path::app_config_dir(app.config().as_ref()).unwrap();
             eprintln!("config path: {:?}", cfg);
 
+            //let names = app.windows().keys().map(|s| s.clone()).collect::<Vec<_>>();
+            //eprintln!("windows: {:?}", names);
+
             app.handle().manage(api::ChatGPT::new(cfg));
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -80,6 +102,8 @@ fn main() {
             set_title,
             suggest_title,
         ])
+        .menu(build_menu())
+        .on_menu_event(handle_menu_event)
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

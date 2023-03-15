@@ -300,9 +300,9 @@ fn ChatCompletion<G: Html>(ctx: Scope, props: ChatAppProps) -> View<G> {
     let waiting_for_response = create_signal(ctx, false);
     let submit_state = create_memo(ctx, || {
         if *waiting_for_response.get() {
-            "btn btn-info btn-circle btn-disabled"
+            "btn btn-outline btn-info loading btn-sm btn-disabled"
         } else {
-            "btn btn-info btn-circle"
+            "btn btn-outline btn-info btn-sm"
         }
     });
 
@@ -412,16 +412,16 @@ fn ChatCompletion<G: Html>(ctx: Scope, props: ChatAppProps) -> View<G> {
             }
 
             div(class="relative mb-2") {
-                div(class="absolute top-3 right-2") {
+                div(class="absolute bottom-2 right-2") {
                     button(class=*submit_state.get(),
                         on:click=|_| {
-                        wasm_log!("clicked");
                         clicked.set(());
                     }) {
-                        svg(xmlns="http://www.w3.org/2000/svg",viewBox="0 0 24 24",fill="currentColor",class="w-6 h-6") {
+                        svg(xmlns="http://www.w3.org/2000/svg",viewBox="0 0 20 20",fill="currentColor",class="w-5 h-5") {
                             path(fill-rule="evenodd",
-                                d="M4.5 5.653c0-1.426 1.529-2.33 2.779-1.643l11.54 6.348c1.295.712 1.295 2.573 0 3.285L7.28 19.991c-1.25.687-2.779-.217-2.779-1.643V5.653z",
+                                d="M9.315 7.584C12.195 3.883 16.695 1.5 21.75 1.5a.75.75 0 01.75.75c0 5.056-2.383 9.555-6.084 12.436A6.75 6.75 0 019.75 22.5a.75.75 0 01-.75-.75v-4.131A15.838 15.838 0 016.382 15H2.25a.75.75 0 01-.75-.75 6.75 6.75 0 017.815-6.666zM15 6.75a2.25 2.25 0 100 4.5 2.25 2.25 0 000-4.5z",
                                 clip-rule="evenodd")
+                                path(d="M5.26 17.242a.75.75 0 10-.897-1.203 5.243 5.243 0 00-2.05 5.022.75.75 0 00.625.627 5.243 5.243 0 005.022-2.051.75.75 0 10-1.202-.897 3.744 3.744 0 01-3.008 1.51c0-1.23.592-2.323 1.51-3.008z")
                         }
                     }
                 }
@@ -433,11 +433,58 @@ fn ChatCompletion<G: Html>(ctx: Scope, props: ChatAppProps) -> View<G> {
     }
 }
 
+#[derive(Prop)]
+struct HomeItemProp<'a, G: Html> {
+    link: &'a str,
+    msg: &'a str,
+    children: Children<'a, G>,
+}
+
+#[component]
+fn HomeItem<'a, G: Html>(ctx: Scope<'a>, props: HomeItemProp<'a, G>) -> View<G> {
+    let icon = props.children.call(ctx);
+    let text = props.msg.to_owned();
+    view! { ctx,
+    div(class="card w-48 h-48 bg-primary text-primary-content") {
+        div(class="card-body items-center text-center") {
+            h2(class="card-title") {
+                (icon)
+            }
+            div(class="card-actions justify-end mt-8") {
+                a(class="btn",href=props.link) {
+                    (text)
+                }
+            }
+        }
+    }
+    }
+}
+
 #[component]
 fn Home<G: Html>(ctx: Scope) -> View<G> {
     view! { ctx,
-        div(class="card flex-1 items-center") {
-            h1 { "Home" }
+        div(class="flex-1 flex flex-row items-center justify-evenly") {
+            HomeItem(link="/chats", msg="Chats") {
+                svg(xmlns="http://www.w3.org/2000/svg",viewBox="0 0 24 24",fill="currentColor",class="w-6 h-6") {
+                    path(fill-rule="evenodd",
+                        d="M4.848 2.771A49.144 49.144 0 0112 2.25c2.43 0 4.817.178 7.152.52 1.978.292 3.348 2.024 3.348 3.97v6.02c0 1.946-1.37 3.678-3.348 3.97a48.901 48.901 0 01-3.476.383.39.39 0 00-.297.17l-2.755 4.133a.75.75 0 01-1.248 0l-2.755-4.133a.39.39 0 00-.297-.17 48.9 48.9 0 01-3.476-.384c-1.978-.29-3.348-2.024-3.348-3.97V6.741c0-1.946 1.37-3.68 3.348-3.97zM6.75 8.25a.75.75 0 01.75-.75h9a.75.75 0 010 1.5h-9a.75.75 0 01-.75-.75zm.75 2.25a.75.75 0 000 1.5H12a.75.75 0 000-1.5H7.5z",
+                        clip-rule="evenodd")
+                }
+            }
+            HomeItem(link="/voice", msg="voice") {
+                svg(xmlns="http://www.w3.org/2000/svg",viewBox="0 0 24 24",fill="currentColor",class="w-6 h-6") {
+                    path(d="M13.5 4.06c0-1.336-1.616-2.005-2.56-1.06l-4.5 4.5H4.508c-1.141 0-2.318.664-2.66 1.905A9.76 9.76 0 001.5 12c0 .898.121 1.768.35 2.595.341 1.24 1.518 1.905 2.659 1.905h1.93l4.5 4.5c.945.945 2.561.276 2.561-1.06V4.06zM18.584 5.106a.75.75 0 011.06 0c3.808 3.807 3.808 9.98 0 13.788a.75.75 0 11-1.06-1.06 8.25 8.25 0 000-11.668.75.75 0 010-1.06z")
+                    path(d="M15.932 7.757a.75.75 0 011.061 0 6 6 0 010 8.486.75.75 0 01-1.06-1.061 4.5 4.5 0 000-6.364.75.75 0 010-1.06z")
+                }
+            }
+
+            HomeItem(link="/codeassist", msg="Coding") {
+                svg(xmlns="http://www.w3.org/2000/svg",viewBox="0 0 24 24",fill="currentColor",class="w-6 h-6") {
+                    path(fill-rule="evenodd",
+                        d="M2.25 6a3 3 0 013-3h13.5a3 3 0 013 3v12a3 3 0 01-3 3H5.25a3 3 0 01-3-3V6zm3.97.97a.75.75 0 011.06 0l2.25 2.25a.75.75 0 010 1.06l-2.25 2.25a.75.75 0 01-1.06-1.06l1.72-1.72-1.72-1.72a.75.75 0 010-1.06zm4.28 4.28a.75.75 0 000 1.5h3a.75.75 0 000-1.5h-3z",
+                        clip-rule="evenodd" )
+                }
+            }
         }
     }
 }
@@ -493,7 +540,7 @@ where
 fn App<G: Html>(ctx: Scope) -> View<G> {
     window_event_listener(ctx, "load", || {
         wasm_log!("loaded");
-        navigate("/chats");
+        navigate("/");
     });
 
     window_event_listener(ctx, "resize", || {
@@ -573,3 +620,4 @@ extern "C" {
     fn highlightAll();
     fn highlightAuto(html: JsValue) -> JsValue;
 }
+
