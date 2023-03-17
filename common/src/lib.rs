@@ -7,6 +7,12 @@ pub struct Message {
     pub content: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Prompt {
+    pub act: String,
+    pub content: String,
+}
+
 impl Message {
     pub fn new_user(content: String) -> Self {
         Message {

@@ -30,6 +30,7 @@ getrandom = { version = "0.2.8", features = ["js"] }
 sled = "0.34.7"
 itertools = "0.10.5"
 reqwest-eventsource = "0.4.0"
+csv = "1.2.1"
 
 
 [features]

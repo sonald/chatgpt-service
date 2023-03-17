@@ -6,7 +6,7 @@ use wasm_bindgen::prelude::*;
 use web_sys::{console, window};
 use pulldown_cmark as md;
 use uuid::Uuid;
-use tracing::{debug, info};
+use tracing::debug;
 
 use common::*;
 
@@ -107,6 +107,22 @@ fn Bubble<G: Html>(ctx: Scope, props: BubbleProps) -> View<G> {
     }
 }
 
+async fn start_conversation(system_hint: String) {
+    if let Err(e) = openai_start_conversation(Some(system_hint))
+        .await
+        .map_err(|e| format!("{:?}", e))
+        .and_then(|id| {
+            wasm_log!("created: {:?}", id);
+            serde_wasm_bindgen::from_value::<ConversationId>(id).map_err(|e| e.to_string())
+        }).and_then(|cid| {
+            navigate(&format!("/chats/{}", cid.0));
+            Ok(())
+        }) {
+            wasm_log!("{}", e);
+    }
+}
+
+
 #[derive(Prop)]
 struct ChatAppProps {
     id: String,
@@ -123,15 +139,33 @@ fn ChatApp<G: Html>(ctx: Scope, sub: ChatAppProps) -> View<G> {
     let current_id: &Signal<Option<ConversationId>> = create_signal(ctx, None);
     provide_context_ref(ctx, current_id);
 
-    let request_new_conversation = create_signal(ctx, ());
+    let request_new_conversation = create_signal(ctx, None);
     provide_context_ref(ctx, request_new_conversation);
+
+    let system_hint = create_signal(ctx, "".to_string());
+
+    create_effect(ctx, move || {
+        request_new_conversation.track();
+
+        if !conversations_loaded.get_untracked().as_ref() {
+            return;
+        }
+
+        if request_new_conversation.get().is_none() {
+            return
+        }
+
+        sycamore::futures::spawn_local_scoped(ctx, async move {
+            start_conversation(system_hint.get_untracked().as_ref().clone()).await;
+        });
+    });
 
     sycamore::futures::spawn_local_scoped(ctx, async move {
         match openai_get_conversations().await {
             Ok(list) => {
-                wasm_log!("conversations: {:?}", list);
                 match serde_wasm_bindgen::from_value::<Vec<ConversationId>>(list) {
                     Ok(list) => {
+                        wasm_log!("conversations loaded: {:?}", list);
                         conversations.set(list); 
                         conversations_loaded.set(true);
                     },
@@ -146,10 +180,123 @@ fn ChatApp<G: Html>(ctx: Scope, sub: ChatAppProps) -> View<G> {
         };
     });
 
+    if sub.id.is_empty() {
+        view! {ctx,
+            div(class="flex-1 flex flex-row") {
+                ChatList {}
+                NewChatGuide(prompt=system_hint, request_new=request_new_conversation)
+            }
+        }
+    } else {
+        view! {ctx,
+            div(class="flex-1 flex flex-row") {
+                ChatList {}
+                ChatCompletion(id=sub.id.clone())
+            }
+        }
+    }
+
+}
+
+#[component(inline_props)]
+fn PromptItem<'a, G: Html>(ctx: Scope<'a>, prompt: Prompt, used: &'a Signal<String>) -> View<G> {
+    let c = prompt.content.clone();
+
     view! {ctx,
-        div(class="flex-1 flex flex-row") {
-            ChatList {}
-            ChatCompletion(id=sub.id.clone())
+        tr(class="w-full") {
+            td { button(class="btn btn-info btn-outline btn-sm", on:click=move |_| {
+                used.set(c.clone());
+            }) { "use" } }
+            td { (prompt.act) }
+            td(class="") {
+                div(class="overflow-y-scroll overflow-x-hidden break-all", style="width: 400px") {
+                    (prompt.content) 
+                }
+            }
+        }
+    }
+}
+
+#[derive(Prop)]
+struct TextAreaProps<'a> {
+    content: &'a Signal<String>,
+    request_new: &'a Signal<Option<()>>,
+    placeholder: String,
+}
+
+#[component]
+fn TextArea<'a, G: Html>(ctx: Scope<'a>, props: TextAreaProps<'a>) -> View<G> {
+    let on_click = |e: web_sys::Event| {
+        e.prevent_default();
+        props.request_new.set(Some(()));
+        wasm_log!("request_new clicked");
+    };
+
+    view! {ctx,
+        div(class="relative mb-2") {
+            div(class="absolute bottom-2 right-2") {
+                button(class="btn", on:click=on_click) {
+                    svg(xmlns="http://www.w3.org/2000/svg",viewBox="0 0 20 20",fill="currentColor",class="w-5 h-5") {
+                        path(fill-rule="evenodd",
+                            d="M9.315 7.584C12.195 3.883 16.695 1.5 21.75 1.5a.75.75 0 01.75.75c0 5.056-2.383 9.555-6.084 12.436A6.75 6.75 0 019.75 22.5a.75.75 0 01-.75-.75v-4.131A15.838 15.838 0 016.382 15H2.25a.75.75 0 01-.75-.75 6.75 6.75 0 017.815-6.666zM15 6.75a2.25 2.25 0 100 4.5 2.25 2.25 0 000-4.5z",
+                            clip-rule="evenodd")
+                            path(d="M5.26 17.242a.75.75 0 10-.897-1.203 5.243 5.243 0 00-2.05 5.022.75.75 0 00.625.627 5.243 5.243 0 005.022-2.051.75.75 0 10-1.202-.897 3.744 3.744 0 01-3.008 1.51c0-1.23.592-2.323 1.51-3.008z")
+                    }
+                }
+            }
+
+            textarea(class="w-full textarea textarea-info",
+                rows=4,
+                placeholder=props.placeholder,
+                bind:value=props.content)
+        }
+    }
+}
+
+#[component(inline_props)]
+fn NewChatGuide<'a, G: Html>(ctx: Scope<'a>, prompt: &'a Signal<String>, request_new: &'a Signal<Option<()>>) -> View<G> {
+    let selected = create_signal(ctx, "".to_string());
+    let preset_prompts = create_signal(ctx, vec![]);
+
+    create_effect(ctx, move || {
+        if selected.get().is_empty() {
+            return;
+        }
+
+        sycamore::futures::spawn_local_scoped(ctx, async move {
+            prompt.set((*selected.get_untracked()).clone());
+        });
+    });
+
+    sycamore::futures::spawn_local_scoped(ctx, async move {
+        if let Ok(prompts) = openai_bundled_prompts().await {
+            if let Ok(prompts) = serde_wasm_bindgen::from_value::<Vec<Prompt>>(prompts) {
+                preset_prompts.set(prompts);
+            }
+        }
+    });
+
+    view! {ctx,
+        div(class="flex flex-col h-full w-full") {
+            table(class="flex-1 table table-fixed border-spaing-0 boder-collapse table-compact overflow-hidden") {
+                thead(class="w-full block") {
+                    tr(class="w-full") {
+                        th(class="w-1/6") { } 
+                        th(class="") { "Act" }
+                        th(class="") { "Content" }
+                    }
+                }
+
+                tbody(class="block overflow-y-auto w-full", style="height: 400px") {
+                    Keyed(iterable=preset_prompts,
+                        view=move |cx, x| {
+                            view!{cx, PromptItem(prompt=x, used=selected)}
+                        },
+                        key=|x| x.act.clone())
+                }
+            }
+
+            TextArea(placeholder="system prompt...".to_string(), content=prompt, request_new=request_new)
         }
     }
 }
@@ -158,7 +305,6 @@ fn ChatApp<G: Html>(ctx: Scope, sub: ChatAppProps) -> View<G> {
 fn ChatList<G: Html>(ctx: Scope) -> View<G> {
     let conversations = use_context::<Signal<Vec<ConversationId>>>(ctx);
     let current_id = use_context::<Signal<Option<ConversationId>>>(ctx);
-    let request_new_conversation = use_context::<Signal<()>>(ctx);
 
     view! { ctx,
         div(class="h-full flex flex-col mr-2 min-w-fit") {
@@ -188,8 +334,7 @@ fn ChatList<G: Html>(ctx: Scope) -> View<G> {
 
             div(class="flex justify-center my-1") {
                 button(class="btn btn-success btn-circle", on:click=|_| {
-                    wasm_log!("new clicked");
-                    request_new_conversation.set(());
+                    navigate("/chats");
                 }) {
                     svg(xmlns="http://www.w3.org/2000/svg",viewBox="0 0 24 24",fill="currentColor",class="w-6 h-6") {
                         path(fill-rule="evenodd",
@@ -242,35 +387,23 @@ async fn continue_conversation<'a>(conversation: &Signal<Conversation<'a>>, ques
     }
 }
 
-async fn check_start_conversation<'a>(conversation: &Signal<Conversation<'a>>) {
-    let cnv = conversation.get_untracked();
-    match openai_start_conversation().await {
-        Ok(id) => {
-            wasm_log!("created: {:?}", id);
-            match serde_wasm_bindgen::from_value(id) {
-                Ok(cid) => {
-                    cnv.id.set(Some(cid));
-                    cnv.title.set("you are a software engineer".to_string());
-                    cnv.chats.modify().clear();
-
-                    navigate(&format!("/chats/{}", cid.0));
-                },
-                Err(e) => {
-                    wasm_log!("{}", e.to_string());
-                },
-            }
-        }
-        Err(e) => {
-            wasm_log!("{:?}", e);
-            return;
-        }
-    };
-}
-
 async fn load_conversation<'a>(cid: ConversationId, conversation: &Signal<Conversation<'a>>) {
     wasm_log!("load conversation {:?}", cid);
 
     conversation.get_untracked().id.set(Some(cid));
+
+    //serde_wasm_bindgen::to_value(&cid)
+        //.map_err(|e| e.to_string())
+        //.and_then(|id| {
+            //openai_get_conversation(id).await.map_err(|e| format!("{:?}", e))
+        //}).and_then(|msgs| {
+            //serde_wasm_bindgen::from_value(msgs).map_err(|e| e.to_string())
+        //}).and_then(|msgs: Vec<Message>| {
+            //conversation.get_untracked().chats.set(msgs);
+            //highlightAll();
+        //});
+
+    //return; 
 
     let id = match serde_wasm_bindgen::to_value(&cid) {
         Ok(id) => id,
@@ -308,11 +441,7 @@ fn ChatCompletion<G: Html>(ctx: Scope, props: ChatAppProps) -> View<G> {
 
     let conversation = create_signal(ctx, Conversation::new(ctx));
 
-    let conversations = use_context::<Signal<Vec<ConversationId>>>(ctx);
-    let conversations_loaded = use_context::<Signal<bool>>(ctx);
-    let request_new_conversation = use_context::<Signal<()>>(ctx);
     let current_id = use_context::<Signal<Option<ConversationId>>>(ctx);
-
     create_effect(ctx, move || {
         current_id.set(*conversation.get_untracked().id.get());
         wasm_log!("current_id changed to {:?}", current_id.get_untracked());
@@ -346,36 +475,9 @@ fn ChatCompletion<G: Html>(ctx: Scope, props: ChatAppProps) -> View<G> {
         });
     });
 
-    create_effect(ctx, move || {
-        request_new_conversation.track();
-        if !conversations_loaded.get_untracked().as_ref() {
-            return;
-        }
-
-        sycamore::futures::spawn_local_scoped(ctx, async move {
-            check_start_conversation(conversation).await;
-        });
-    });
 
     let id = props.id.clone();
-    if id.is_empty() {
-        // enter with empty state
-        create_effect(ctx, move || {
-            if !conversations_loaded.get().as_ref() {
-                return;
-            }
-            sycamore::futures::spawn_local_scoped(ctx, async move {
-                if conversations.get().is_empty() {
-                    check_start_conversation(conversation).await;
-                } else {
-                    let id = conversations.get().first().unwrap().clone();
-                    wasm_log!("load existing conversation {:?}", id);
-                    load_conversation(id, conversation).await;
-                }
-            });
-        });
-
-    } else {
+    if !id.is_empty() {
         sycamore::futures::spawn_local_scoped(ctx, async move {
             let cid = ConversationId(Uuid::parse_str(&id).expect("uuid"));
             load_conversation(cid, conversation).await;
@@ -391,7 +493,7 @@ fn ChatCompletion<G: Html>(ctx: Scope, props: ChatAppProps) -> View<G> {
                 }
             }
 
-            ul(class="flex-1 flex flex-col my-2 max-h-5/6 overflow-y-scroll") {
+            ul(class="flex-1 flex flex-col my-2 overflow-y-scroll") {
                 Keyed(iterable=conversation.get().chats,
                 view=|cx, x| {
                     match x.role {
@@ -426,6 +528,7 @@ fn ChatCompletion<G: Html>(ctx: Scope, props: ChatAppProps) -> View<G> {
                     }
                 }
                 textarea(class="textarea textarea-info w-full",
+                    rows=4,
                     placeholder="ask your question...",
                     bind:value=question)
             }
@@ -601,7 +704,7 @@ extern "C" {
     #[wasm_bindgen(js_name = invokeCompletion, catch)]
     async fn openai_completion(id: JsValue, messages: JsValue) -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_name = invokeStartConversation, catch)]
-    async fn openai_start_conversation() -> Result<JsValue, JsValue>;
+    async fn openai_start_conversation(hint: Option<String>) -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_name = invokeGetConversations, catch)]
     async fn openai_get_conversations() -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_name = invokeGetConversation, catch)]
@@ -612,6 +715,8 @@ extern "C" {
     async fn openai_set_title(id: JsValue, title: JsValue) -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_name = invokeSuggestTitle, catch)]
     async fn openai_suggest_title(id: JsValue) -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(js_name = invokeBundledPrompts, catch)]
+    async fn openai_bundled_prompts() -> Result<JsValue, JsValue>;
 }
 
 #[wasm_bindgen]

@@ -4,7 +4,7 @@
 )]
 
 use chatgpt_backend::api;
-use common::ConversationId;
+use common::{ConversationId, Prompt};
 use tauri::{CustomMenuItem, Manager, Menu, Submenu, WindowMenuEvent};
 
 #[tauri::command]
@@ -17,8 +17,8 @@ async fn completion<'r>(
 }
 
 #[tauri::command]
-fn start_conversation<'r>(state: tauri::State<'r, api::ChatGPT>) -> Result<ConversationId, String> {
-    state.start_conversation()
+fn start_conversation<'r>(hint: Option<String>, state: tauri::State<'r, api::ChatGPT>) -> Result<ConversationId, String> {
+    state.start_conversation(hint)
 }
 
 #[tauri::command]
@@ -61,6 +61,22 @@ async fn suggest_title<'r>(
     state.suggest_title(id).await
 }
 
+#[tauri::command]
+fn bundled_prompts() -> Result<Vec<Prompt>, String> {
+    use csv::StringRecordsIter;
+    use itertools::Itertools;
+
+    let file = include_bytes!("../prompts.csv");
+    let mut rdr = csv::ReaderBuilder::new().from_reader(&file[..]);
+    rdr.records()
+        .map_ok(|r| Prompt {
+            act: r.get(0).unwrap().to_owned(),
+            content: r.get(1).unwrap().to_owned(),
+        })
+        .try_collect::<_, Vec<_>, _>()
+        .map_err(|e| e.to_string())
+}
+
 fn build_menu() -> Menu {
     let chats = CustomMenuItem::new("id_chats", "Chat");
     let coding = CustomMenuItem::new("id_coding", "Coding");
@@ -101,6 +117,7 @@ fn main() {
             get_title,
             set_title,
             suggest_title,
+            bundled_prompts,
         ])
         .menu(build_menu())
         .on_menu_event(handle_menu_event)

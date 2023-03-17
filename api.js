@@ -4,8 +4,8 @@ export async function invokeCompletion(id, messages) {
     return await invoke("completion", {id, messages});
 }
 
-export async function invokeStartConversation() {
-    return await invoke("start_conversation");
+export async function invokeStartConversation(hint) {
+    return await invoke("start_conversation", {hint});
 }
 
 export async function invokeGetConversations() {
@@ -28,3 +28,6 @@ export async function invokeSuggestTitle(id) {
     return await invoke("suggest_title", {id});
 }
 
+export async function invokeBundledPrompts() {
+    return await invoke("bundled_prompts");
+}

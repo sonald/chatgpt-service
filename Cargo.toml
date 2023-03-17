@@ -28,8 +28,11 @@ version = "0.3"
 features = [
     "Window",
     "HtmlSelectElement",
+    "HtmlElement",
     "Navigator",
-    "console"
+    "console",
+    "MouseEvent",
+    "KeyboardEvent"
 ]
 
 

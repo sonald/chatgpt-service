@@ -120,9 +120,8 @@ impl ChatGPT {
     }
 
 
-    pub fn start_conversation(&self) -> Result<ConversationId, String> {
-        eprintln!("start_conversation");
-        Ok(self.store.start_conversation(None))
+    pub fn start_conversation(&self, hint: Option<String>) -> Result<ConversationId, String> {
+        Ok(self.store.start_conversation(hint))
     }
 
     pub fn get_conversations(&self) -> Result<Vec<ConversationId>, String> {
@@ -147,7 +146,7 @@ impl ChatGPT {
             let dialogue = dialogue.into_iter().take(6).map(|msg| msg.content).collect::<Vec<_>>().join("\n");
 
             Ok(vec! {
-                Message::new_system("Act as a summarizer and summarize this conversation".to_string()),
+                Message::new_system("Act as a summarizer and summarize this conversation in ten words.".to_string()),
                 Message::new_user(dialogue),
             })
         });
