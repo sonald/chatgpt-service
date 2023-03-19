@@ -63,7 +63,6 @@ async fn suggest_title<'r>(
 
 #[tauri::command]
 fn bundled_prompts() -> Result<Vec<Prompt>, String> {
-    use csv::StringRecordsIter;
     use itertools::Itertools;
 
     let file = include_bytes!("../prompts.csv");

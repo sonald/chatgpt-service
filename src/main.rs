@@ -208,8 +208,8 @@ fn PromptItem<'a, G: Html>(ctx: Scope<'a>, prompt: Prompt, used: &'a Signal<Stri
                 used.set(c.clone());
             }) { "use" } }
             td { (prompt.act) }
-            td(class="") {
-                div(class="overflow-y-scroll overflow-x-hidden break-all", style="width: 400px") {
+            td(class="w-full h-full block") {
+                p(class="text-ellipsis overflow-hidden break-all", style="width: 400px") {
                     (prompt.content) 
                 }
             }
@@ -236,11 +236,15 @@ fn TextArea<'a, G: Html>(ctx: Scope<'a>, props: TextAreaProps<'a>) -> View<G> {
         div(class="relative mb-2") {
             div(class="absolute bottom-2 right-2") {
                 button(class="btn", on:click=on_click) {
-                    svg(xmlns="http://www.w3.org/2000/svg",viewBox="0 0 20 20",fill="currentColor",class="w-5 h-5") {
-                        path(fill-rule="evenodd",
-                            d="M9.315 7.584C12.195 3.883 16.695 1.5 21.75 1.5a.75.75 0 01.75.75c0 5.056-2.383 9.555-6.084 12.436A6.75 6.75 0 019.75 22.5a.75.75 0 01-.75-.75v-4.131A15.838 15.838 0 016.382 15H2.25a.75.75 0 01-.75-.75 6.75 6.75 0 017.815-6.666zM15 6.75a2.25 2.25 0 100 4.5 2.25 2.25 0 000-4.5z",
-                            clip-rule="evenodd")
-                            path(d="M5.26 17.242a.75.75 0 10-.897-1.203 5.243 5.243 0 00-2.05 5.022.75.75 0 00.625.627 5.243 5.243 0 005.022-2.051.75.75 0 10-1.202-.897 3.744 3.744 0 01-3.008 1.51c0-1.23.592-2.323 1.51-3.008z")
+                    svg(xmlns="http://www.w3.org/2000/svg",
+                        fill="none",
+                        viewBox="0 0 20 20",
+                        stroke-width="1.0",
+                        stroke="currentColor",
+                        class="w-5 h-5") {
+                        path(stroke-linecap="round",
+                            stroke-linejoin="round",
+                            d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5")
                     }
                 }
             }
@@ -253,6 +257,7 @@ fn TextArea<'a, G: Html>(ctx: Scope<'a>, props: TextAreaProps<'a>) -> View<G> {
     }
 }
 
+//TODO: suggesting prompts while typing
 #[component(inline_props)]
 fn NewChatGuide<'a, G: Html>(ctx: Scope<'a>, prompt: &'a Signal<String>, request_new: &'a Signal<Option<()>>) -> View<G> {
     let selected = create_signal(ctx, "".to_string());
@@ -278,16 +283,16 @@ fn NewChatGuide<'a, G: Html>(ctx: Scope<'a>, prompt: &'a Signal<String>, request
 
     view! {ctx,
         div(class="flex flex-col h-full w-full") {
-            table(class="flex-1 table table-fixed border-spaing-0 boder-collapse table-compact overflow-hidden") {
+            table(class="flex-1 table table-fixed border-spacing-0 boder-collapse overflow-hidden") {
                 thead(class="w-full block") {
-                    tr(class="w-full") {
+                    tr(class="flex w-full") {
                         th(class="w-1/6") { } 
-                        th(class="") { "Act" }
-                        th(class="") { "Content" }
+                        th(class="w-1/6") { "Act" }
+                        th(class="flex-1") { "Content" }
                     }
                 }
 
-                tbody(class="block overflow-y-auto w-full", style="height: 400px") {
+                tbody(class="block overflow-y-auto w-full", style="height: calc(100vh - 300px)") {
                     Keyed(iterable=preset_prompts,
                         view=move |cx, x| {
                             view!{cx, PromptItem(prompt=x, used=selected)}
@@ -296,7 +301,7 @@ fn NewChatGuide<'a, G: Html>(ctx: Scope<'a>, prompt: &'a Signal<String>, request
                 }
             }
 
-            TextArea(placeholder="system prompt...".to_string(), content=prompt, request_new=request_new)
+            TextArea(placeholder="choose a system prompt or type your own...".to_string(), content=prompt, request_new=request_new)
         }
     }
 }
@@ -519,11 +524,15 @@ fn ChatCompletion<G: Html>(ctx: Scope, props: ChatAppProps) -> View<G> {
                         on:click=|_| {
                         clicked.set(());
                     }) {
-                        svg(xmlns="http://www.w3.org/2000/svg",viewBox="0 0 20 20",fill="currentColor",class="w-5 h-5") {
-                            path(fill-rule="evenodd",
-                                d="M9.315 7.584C12.195 3.883 16.695 1.5 21.75 1.5a.75.75 0 01.75.75c0 5.056-2.383 9.555-6.084 12.436A6.75 6.75 0 019.75 22.5a.75.75 0 01-.75-.75v-4.131A15.838 15.838 0 016.382 15H2.25a.75.75 0 01-.75-.75 6.75 6.75 0 017.815-6.666zM15 6.75a2.25 2.25 0 100 4.5 2.25 2.25 0 000-4.5z",
-                                clip-rule="evenodd")
-                                path(d="M5.26 17.242a.75.75 0 10-.897-1.203 5.243 5.243 0 00-2.05 5.022.75.75 0 00.625.627 5.243 5.243 0 005.022-2.051.75.75 0 10-1.202-.897 3.744 3.744 0 01-3.008 1.51c0-1.23.592-2.323 1.51-3.008z")
+                        svg(xmlns="http://www.w3.org/2000/svg",
+                            fill="none",
+                            viewBox="0 0 20 20",
+                            stroke-width="1.0",
+                            stroke="currentColor",
+                            class="w-5 h-5") {
+                            path(stroke-linecap="round",
+                                stroke-linejoin="round",
+                                d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5")
                         }
                     }
                 }
