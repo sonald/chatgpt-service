@@ -2,6 +2,7 @@
 
 use std::{sync::{Mutex, Arc}, path::{Path, PathBuf}};
 
+use common::{GenerateImageResult, GenerateImageParams};
 use lazy_static::lazy_static;
 use config::{Config, ConfigError, File, Environment};
 use rand::{Rng, SeedableRng, rngs::StdRng, distributions::{Uniform, Distribution}};
@@ -9,6 +10,7 @@ use rand::{Rng, SeedableRng, rngs::StdRng, distributions::{Uniform, Distribution
 static COMPLETION_MODEL: &str = "gpt-3.5-turbo";
 static CODING_MODEL: &str = "code-davinci-002";
 static CHAT_API_PATH: &str = "https://api.openai.com/v1/chat/completions";
+static GEN_IMAGE_API_PATH: &str = "https://api.openai.com/v1/images/generations";
 
 use serde::{Deserialize, Serialize};
 pub use common::{Message, ConversationId};
@@ -18,6 +20,7 @@ use crate::storage::Storage;
 use crate::storage::local::KVStorage as LocalStorage;
 #[cfg(feature = "persist-storage")]
 use crate::storage::disk::KVStorage as DiskStorage;
+
 
 #[derive(Serialize, Debug)]
 #[allow(unused)]
@@ -223,6 +226,53 @@ impl ChatGPT {
             self.store.store_conversation(id, messages).unwrap();
             Ok(msg)
         })
+    }
+
+    pub async fn generate_image(&self, params: GenerateImageParams) -> Result<GenerateImageResult, String> {
+        eprintln!("params: {:?}", params);
+        let api_key = match self.pick_api_key() {
+            Some(key) => key,
+            None => return Err("api key is not set".to_string()),
+        };
+
+        let mut retried = false;
+        let resp = loop {
+            match self.cli
+                .post(GEN_IMAGE_API_PATH)
+                .header(
+                    reqwest::header::AUTHORIZATION,
+                    format!("Bearer {}", api_key),
+                ).header(
+                reqwest::header::CONTENT_TYPE,
+                "application/json",
+                )
+                .json(&params)
+                .send()
+                .await {
+                    Ok(resp) => break resp,
+                    Err(e) => {
+                        if retried {
+                            return Err(format!("request error: {}", e));
+                        }
+                        eprintln!("retry on error: {:?}", e);
+                        retried = true;
+                    }
+                }
+        };
+
+        let data = resp.bytes().await.unwrap();
+        //eprintln!("data: {}", String::from_utf8_lossy(&data));
+        match serde_json::from_slice::<GenerateImageResult>(&data) {
+            Ok(result) => {
+                Ok(result)
+            },
+            Err(err) => {
+                eprintln!("gen image error: {:?}", err);
+                Err(err.to_string())
+            }
+        }
+
+
     }
 }
 

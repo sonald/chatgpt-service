@@ -1,5 +1,7 @@
 #![allow(non_snake_case)]
 
+use std::borrow::Borrow;
+
 use sycamore::prelude::*;
 use sycamore_router::{navigate, HistoryIntegration, Route, Router};
 use wasm_bindgen::prelude::*;
@@ -26,8 +28,8 @@ enum AppRoutes {
     ChatApp { id: Vec<String> },
     #[to("/codeassist")]
     CodeAssist,
-    #[to("/game")]
-    TextGame,
+    #[to("/imgen")]
+    GenImage,
     #[not_found]
     NotFound,
 }
@@ -301,7 +303,9 @@ fn NewChatGuide<'a, G: Html>(ctx: Scope<'a>, prompt: &'a Signal<String>, request
                 }
             }
 
-            TextArea(placeholder="choose a system prompt or type your own...".to_string(), content=prompt, request_new=request_new)
+            TextArea(placeholder="choose a system prompt or type your own...".to_string(),
+                content=prompt,
+                request_new=request_new)
         }
     }
 }
@@ -396,19 +400,6 @@ async fn load_conversation<'a>(cid: ConversationId, conversation: &Signal<Conver
     wasm_log!("load conversation {:?}", cid);
 
     conversation.get_untracked().id.set(Some(cid));
-
-    //serde_wasm_bindgen::to_value(&cid)
-        //.map_err(|e| e.to_string())
-        //.and_then(|id| {
-            //openai_get_conversation(id).await.map_err(|e| format!("{:?}", e))
-        //}).and_then(|msgs| {
-            //serde_wasm_bindgen::from_value(msgs).map_err(|e| e.to_string())
-        //}).and_then(|msgs: Vec<Message>| {
-            //conversation.get_untracked().chats.set(msgs);
-            //highlightAll();
-        //});
-
-    //return; 
 
     let id = match serde_wasm_bindgen::to_value(&cid) {
         Ok(id) => id,
@@ -545,6 +536,68 @@ fn ChatCompletion<G: Html>(ctx: Scope, props: ChatAppProps) -> View<G> {
     }
 }
 
+#[component]
+fn ImageGen<G: Html>(ctx: Scope) -> View<G> {
+    let prompt = create_signal(ctx, "".to_string());
+    let request_new = create_signal(ctx, None);
+    let response: &Signal<Option<GenerateImageResult>> = create_signal(ctx, None);
+
+    let imgdata = create_memo(ctx, || {
+        response.get().as_ref().clone()
+            .map(|r| r.data.get(0).unwrap().b64_json.clone())
+            .unwrap_or("".to_string())
+    });
+
+    create_effect(ctx, move || {
+        request_new.track();
+
+        if prompt.get_untracked().is_empty() {
+            return;
+        }
+
+        if request_new.get_untracked().is_none() {
+            return;
+        }
+
+        sycamore::futures::spawn_local_scoped(ctx, async move {
+            wasm_log!("request image");
+            let params = GenerateImageParams {
+                prompt: prompt.get_untracked().to_string(),
+                n: 1,
+                response_format: "b64_json".to_string(),
+                size: "512x512".to_string(),
+            };
+
+            match serde_wasm_bindgen::to_value(&params) {
+                Ok(params) => match openai_generate_image(params).await {
+                    Ok(resp) => {
+                        let resp = serde_wasm_bindgen::from_value::<GenerateImageResult>(resp).unwrap();
+                        response.set(Some(resp));
+                    },
+                    Err(e) => {
+                        wasm_log!("{:?}", e);
+                    }
+                },
+                Err(e) => {
+                    wasm_log!("{:?}", e);
+                }
+            }
+
+        });
+    });
+
+    view! { ctx, 
+        div(class="flex flex-col w-full") {
+            TextArea(placeholder="image prompt...".to_string(),
+                content=prompt,
+                request_new=request_new)
+            div(class="bg-slate-300 flex-1 flex flex-row items-center justify-center") {
+                img(class="object-scale-down", src=format!("data:image/png;base64,{}", imgdata))
+            }
+        }
+    }
+}
+
 #[derive(Prop)]
 struct HomeItemProp<'a, G: Html> {
     link: &'a str,
@@ -597,6 +650,14 @@ fn Home<G: Html>(ctx: Scope) -> View<G> {
                         clip-rule="evenodd" )
                 }
             }
+
+            HomeItem(link="/imgen", msg="Imagen") {
+                svg(xmlns="http://www.w3.org/2000/svg",viewBox="0 0 24 24",fill="currentColor",class="w-6 h-6") {
+                    path(fill-rule="evenodd",
+                        d="M2.25 6a3 3 0 013-3h13.5a3 3 0 013 3v12a3 3 0 01-3 3H5.25a3 3 0 01-3-3V6zm3.97.97a.75.75 0 011.06 0l2.25 2.25a.75.75 0 010 1.06l-2.25 2.25a.75.75 0 01-1.06-1.06l1.72-1.72-1.72-1.72a.75.75 0 010-1.06zm4.28 4.28a.75.75 0 000 1.5h3a.75.75 0 000-1.5h-3z",
+                        clip-rule="evenodd" )
+                }
+            }
         }
     }
 }
@@ -614,7 +675,7 @@ fn Header<G: Html>(ctx: Scope) -> View<G> {
                     li{a(href="/"){"Home"}}
                     li{a(href="/chats"){"Chats"}}
                     li{a(href="/codeassist"){"CodeAssist"}}
-                    li{a(href="/game"){"Game"}}
+                    li{a(href="/imgen"){"Imagen"}}
                     li{a(href="/about"){"About"}}
                 }
             }
@@ -676,7 +737,7 @@ fn App<G: Html>(ctx: Scope) -> View<G> {
                                     },
                                     AppRoutes::About => view!{cx, About},
                                     AppRoutes::Home => view!{cx, Home},
-                                    AppRoutes::TextGame => view!{cx, NotFound},
+                                    AppRoutes::GenImage => view!{cx, ImageGen},
                                     AppRoutes::CodeAssist => view!{cx, NotFound},
                                     AppRoutes::NotFound => view!{cx, NotFound},
                                 })
@@ -726,6 +787,8 @@ extern "C" {
     async fn openai_suggest_title(id: JsValue) -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_name = invokeBundledPrompts, catch)]
     async fn openai_bundled_prompts() -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(js_name = invokeGenerateImage, catch)]
+    async fn openai_generate_image(req: JsValue) -> Result<JsValue, JsValue>;
 }
 
 #[wasm_bindgen]

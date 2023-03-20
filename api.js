@@ -31,3 +31,7 @@ export async function invokeSuggestTitle(id) {
 export async function invokeBundledPrompts() {
     return await invoke("bundled_prompts");
 }
+
+export async function invokeGenerateImage(req) {
+    return await invoke("generate_image", {req});
+} 

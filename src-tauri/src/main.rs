@@ -4,7 +4,7 @@
 )]
 
 use chatgpt_backend::api;
-use common::{ConversationId, Prompt};
+use common::{ConversationId, Prompt, GenerateImageResult, GenerateImageParams};
 use tauri::{CustomMenuItem, Manager, Menu, Submenu, WindowMenuEvent};
 
 #[tauri::command]
@@ -14,6 +14,15 @@ async fn completion<'r>(
     state: tauri::State<'r, api::ChatGPT>,
 ) -> Result<api::Message, String> {
     state.chat_completion(id, messages).await
+}
+
+
+#[tauri::command]
+async fn generate_image<'r>(
+    req: GenerateImageParams,
+    state: tauri::State<'r, api::ChatGPT>
+) -> Result<GenerateImageResult, String> {
+    state.generate_image(req).await
 }
 
 #[tauri::command]
@@ -117,6 +126,7 @@ fn main() {
             set_title,
             suggest_title,
             bundled_prompts,
+            generate_image,
         ])
         .menu(build_menu())
         .on_menu_event(handle_menu_event)

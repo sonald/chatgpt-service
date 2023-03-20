@@ -1,6 +1,25 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct GenerateImageParams {
+    pub prompt: String,
+    pub n: usize,
+    pub response_format: String,
+    pub size: String,
+}
+
+#[derive(Serialize, Debug, Clone, Deserialize)]
+pub struct ImageData {
+    pub b64_json: String,
+}
+
+#[derive(Serialize, Debug, Clone, Deserialize)]
+pub struct GenerateImageResult {
+    pub created: usize,
+    pub data: Vec<ImageData>,
+}
+
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Message {
     pub role: String,
