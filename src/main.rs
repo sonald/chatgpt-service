@@ -1,14 +1,19 @@
 #![allow(non_snake_case)]
 
-use std::borrow::Borrow;
+use std::sync::{Arc, Mutex};
 
+use futures::channel::oneshot;
+use pulldown_cmark as md;
 use sycamore::prelude::*;
 use sycamore_router::{navigate, HistoryIntegration, Route, Router};
-use wasm_bindgen::prelude::*;
-use web_sys::{console, window};
-use pulldown_cmark as md;
-use uuid::Uuid;
 use tracing::debug;
+use uuid::Uuid;
+use wasm_bindgen::prelude::*;
+use wasm_bindgen_futures::JsFuture;
+use web_sys::{
+    console, window, AudioContext, Blob, MediaDevices, MediaRecorder, MediaStream,
+    MediaStreamConstraints, Url,
+};
 
 use common::*;
 
@@ -30,6 +35,8 @@ enum AppRoutes {
     CodeAssist,
     #[to("/imgen")]
     GenImage,
+    #[to("/voice")]
+    Voice,
     #[not_found]
     NotFound,
 }
@@ -91,10 +98,9 @@ fn Bubble<G: Html>(ctx: Scope, props: BubbleProps) -> View<G> {
                     label(class="btn btn-circle rounded-full bg-slate-200") { (props.actor) }
                 }
                 div(class=("chat-bubble chat-bubble-secondary"),
-                dangerously_set_inner_html=&html_content) 
+                dangerously_set_inner_html=&html_content)
             }
         }
-
     } else {
         view! {
             ctx,
@@ -103,7 +109,7 @@ fn Bubble<G: Html>(ctx: Scope, props: BubbleProps) -> View<G> {
                     label(class="btn btn-circle rounded-full bg-slate-200") { (props.actor) }
                 }
                 div(class="chat-bubble chat-bubble-success",
-                dangerously_set_inner_html=&html_content) 
+                dangerously_set_inner_html=&html_content)
             }
         }
     }
@@ -116,14 +122,15 @@ async fn start_conversation(system_hint: String) {
         .and_then(|id| {
             wasm_log!("created: {:?}", id);
             serde_wasm_bindgen::from_value::<ConversationId>(id).map_err(|e| e.to_string())
-        }).and_then(|cid| {
+        })
+        .and_then(|cid| {
             navigate(&format!("/chats/{}", cid.0));
             Ok(())
-        }) {
-            wasm_log!("{}", e);
+        })
+    {
+        wasm_log!("{}", e);
     }
 }
-
 
 #[derive(Prop)]
 struct ChatAppProps {
@@ -154,7 +161,7 @@ fn ChatApp<G: Html>(ctx: Scope, sub: ChatAppProps) -> View<G> {
         }
 
         if request_new_conversation.get().is_none() {
-            return
+            return;
         }
 
         sycamore::futures::spawn_local_scoped(ctx, async move {
@@ -164,16 +171,14 @@ fn ChatApp<G: Html>(ctx: Scope, sub: ChatAppProps) -> View<G> {
 
     sycamore::futures::spawn_local_scoped(ctx, async move {
         match openai_get_conversations().await {
-            Ok(list) => {
-                match serde_wasm_bindgen::from_value::<Vec<ConversationId>>(list) {
-                    Ok(list) => {
-                        wasm_log!("conversations loaded: {:?}", list);
-                        conversations.set(list); 
-                        conversations_loaded.set(true);
-                    },
-                    Err(e) => {
-                        wasm_log!("{:?}", e);
-                    },
+            Ok(list) => match serde_wasm_bindgen::from_value::<Vec<ConversationId>>(list) {
+                Ok(list) => {
+                    wasm_log!("conversations loaded: {:?}", list);
+                    conversations.set(list);
+                    conversations_loaded.set(true);
+                }
+                Err(e) => {
+                    wasm_log!("{:?}", e);
                 }
             },
             Err(e) => {
@@ -197,7 +202,6 @@ fn ChatApp<G: Html>(ctx: Scope, sub: ChatAppProps) -> View<G> {
             }
         }
     }
-
 }
 
 #[component(inline_props)]
@@ -212,7 +216,7 @@ fn PromptItem<'a, G: Html>(ctx: Scope<'a>, prompt: Prompt, used: &'a Signal<Stri
             td { (prompt.act) }
             td(class="w-full h-full block") {
                 p(class="text-ellipsis overflow-hidden break-all", style="width: 400px") {
-                    (prompt.content) 
+                    (prompt.content)
                 }
             }
         }
@@ -261,7 +265,11 @@ fn TextArea<'a, G: Html>(ctx: Scope<'a>, props: TextAreaProps<'a>) -> View<G> {
 
 //TODO: suggesting prompts while typing
 #[component(inline_props)]
-fn NewChatGuide<'a, G: Html>(ctx: Scope<'a>, prompt: &'a Signal<String>, request_new: &'a Signal<Option<()>>) -> View<G> {
+fn NewChatGuide<'a, G: Html>(
+    ctx: Scope<'a>,
+    prompt: &'a Signal<String>,
+    request_new: &'a Signal<Option<()>>,
+) -> View<G> {
     let selected = create_signal(ctx, "".to_string());
     let preset_prompts = create_signal(ctx, vec![]);
 
@@ -288,7 +296,7 @@ fn NewChatGuide<'a, G: Html>(ctx: Scope<'a>, prompt: &'a Signal<String>, request
             table(class="flex-1 table table-fixed border-spacing-0 boder-collapse overflow-hidden") {
                 thead(class="w-full block") {
                     tr(class="flex w-full") {
-                        th(class="w-1/6") { } 
+                        th(class="w-1/6") { }
                         th(class="w-1/6") { "Act" }
                         th(class="flex-1") { "Content" }
                     }
@@ -318,20 +326,20 @@ fn ChatList<G: Html>(ctx: Scope) -> View<G> {
     view! { ctx,
         div(class="h-full flex flex-col mr-2 min-w-fit") {
             div(class="title shrink flex flex-row") {
-                h2(class="shrink"){"Conversations"} 
+                h2(class="shrink"){"Conversations"}
             }
 
             ul(class="flex-1 flex flex-col my-2 overflow-y-scroll menu w-40 truncate") {
                 Keyed(iterable=conversations,
                     view=|cx, x| {
                         if *current_id.get() == Some(x) {
-                            view!(cx, 
+                            view!(cx,
                                 li(class="hover-bordered"){
                                     a(class="active", href=format!("/chats/{}", x.0)){(x.0)}
                                 })
 
                         } else {
-                            view!(cx, 
+                            view!(cx,
                                 li(class="hover-bordered"){
                                     a(href=format!("/chats/{}", x.0)){(x.0)}
                                 })
@@ -356,7 +364,10 @@ fn ChatList<G: Html>(ctx: Scope) -> View<G> {
     }
 }
 
-async fn continue_conversation<'a>(conversation: &Signal<Conversation<'a>>, question: &Signal<String>) {
+async fn continue_conversation<'a>(
+    conversation: &Signal<Conversation<'a>>,
+    question: &Signal<String>,
+) {
     let cnv = conversation.get_untracked();
 
     cnv.chats.modify().push(Message::new_user({
@@ -369,7 +380,9 @@ async fn continue_conversation<'a>(conversation: &Signal<Conversation<'a>>, ques
 
     question.set("".to_string());
     let prompt = cnv.chats.get();
-    cnv.chats.modify().push(Message::new_assistant("...".to_string()));
+    cnv.chats
+        .modify()
+        .push(Message::new_assistant("...".to_string()));
 
     match serde_wasm_bindgen::to_value(prompt.as_ref()) {
         Ok(prompt) => {
@@ -388,7 +401,7 @@ async fn continue_conversation<'a>(conversation: &Signal<Conversation<'a>>, ques
             }
 
             highlightAll();
-        },
+        }
         Err(e) => {
             wasm_log!("{:?}", e);
             cnv.chats.modify().pop();
@@ -471,7 +484,6 @@ fn ChatCompletion<G: Html>(ctx: Scope, props: ChatAppProps) -> View<G> {
         });
     });
 
-
     let id = props.id.clone();
     if !id.is_empty() {
         sycamore::futures::spawn_local_scoped(ctx, async move {
@@ -537,13 +549,161 @@ fn ChatCompletion<G: Html>(ctx: Scope, props: ChatAppProps) -> View<G> {
 }
 
 #[component]
+fn Voice<G: Html>(ctx: Scope) -> View<G> {
+    let clicked = create_signal(ctx, None);
+
+    let ms = create_signal(ctx, None);
+    let mr = create_signal(ctx, None);
+    let blob_chunks = Arc::new(Mutex::new(vec![]));
+
+    let download_ref = create_node_ref(ctx);
+
+    let chunks = blob_chunks.clone();
+    create_effect(ctx, move || {
+        if clicked.get().is_none() {
+            return;
+        }
+
+        let chunks = chunks.clone();
+        sycamore::futures::spawn_local_scoped(ctx, async move {
+            if mr.get_untracked().is_none() {
+                let window = web_sys::window().expect("no global `window` exists");
+
+                let media_devices = window.navigator().media_devices().unwrap();
+                let mut constraints = MediaStreamConstraints::new();
+                constraints.audio(&JsValue::from_bool(true));
+                constraints.video(&JsValue::from_bool(false));
+
+                let media_stream_promise = media_devices
+                    .get_user_media_with_constraints(&constraints)
+                    .unwrap();
+                let media_stream: MediaStream =
+                    JsFuture::from(media_stream_promise).await.unwrap().into();
+                ms.set(Some(media_stream));
+
+                let audio_context = AudioContext::new().unwrap();
+                let ms_ref = ms.get_untracked().as_ref().clone();
+                let source = audio_context
+                    .create_media_stream_source(ms_ref.as_ref().unwrap())
+                    .unwrap();
+                source
+                    .connect_with_audio_node(&audio_context.destination())
+                    .unwrap();
+
+                let types = [
+                    "audio/webm",
+                    "audio/webm;codecs=opus",
+                    "audio/ogg;codecs=opus",
+                    "audio/mp3",
+                    "audio/wav",
+                ];
+                for t in types {
+                    if MediaRecorder::is_type_supported(t) {
+                        wasm_log!("supported: {:?}", t);
+                    }
+                }
+
+                let mut opts = web_sys::MediaRecorderOptions::new();
+                opts.mime_type("audio/mp3");
+
+                let media_recorder =
+                    MediaRecorder::new_with_media_stream_and_media_recorder_options(
+                        ms_ref.as_ref().unwrap(), &opts)
+                    .expect("MediaRecorder failed");
+                wasm_log!("mime: {:?}", media_recorder.mime_type());
+
+                let chunks2 = chunks.clone();
+                let onstop = Closure::wrap(Box::new(move || {
+                    let recorded_chunks: Vec<Blob> = chunks2.lock().unwrap().clone();
+                    let array = js_sys::Array::new();
+                    for blob in &recorded_chunks {
+                        array.push(&blob);
+                    }
+                    let blob = Blob::new_with_u8_array_sequence(&JsValue::from(array)).unwrap();
+                    wasm_log!(
+                        "stop recording, chunks: {}, total size: {}",
+                        recorded_chunks.len(),
+                        blob.size()
+                    );
+                    let url = Url::create_object_url_with_blob(&blob).unwrap();
+
+                    let window = web_sys::window().expect("No window found");
+                    let document = window.document().expect("No document found");
+
+                    let audio = document.get_element_by_id("source").unwrap();
+                    audio.set_attribute("src", &url).unwrap();
+
+                    let download_link = document.get_element_by_id("download").unwrap();
+                    download_link.set_attribute("href", &url).unwrap();
+                    download_link.set_attribute("download", "voice.mp3").unwrap();
+                }) as Box<dyn FnMut()>);
+
+                let chunks2 = chunks.clone();
+                let onstart = Closure::wrap(Box::new(move || {
+                    chunks2.lock().unwrap().clear();
+                    wasm_log!("start recording");
+                }) as Box<dyn FnMut()>);
+
+                let chunks2 = chunks.clone();
+                let ondata = Closure::wrap(Box::new(move |e: web_sys::BlobEvent| {
+                    wasm_log!("ondata: {:?}", e);
+                    chunks2.lock().unwrap().push(e.data().unwrap());
+                }) as Box<dyn FnMut(_)>);
+
+                media_recorder.set_onstop(Some(onstop.as_ref().unchecked_ref()));
+                media_recorder.set_ondataavailable(Some(ondata.as_ref().unchecked_ref()));
+                ondata.forget();
+                onstop.forget();
+                mr.set(Some(media_recorder));
+            }
+
+            if *clicked.get_untracked() == Some(true) {
+                wasm_log!("start");
+                Option::as_ref(mr.get().as_ref()).unwrap().start().unwrap();
+            } else {
+                Option::as_ref(mr.get().as_ref()).unwrap().stop().unwrap();
+                wasm_log!("stop");
+            }
+        });
+    });
+
+    view! {ctx,
+        div {
+            button(class="btn", on:click=|_| {
+                if *clicked.get_untracked() == Some(true) {
+                    clicked.set(Some(false));
+                } else {
+                    clicked.set(Some(true));
+                }
+            }) {
+                (if *clicked.get() == Some(true) {
+                    "stop"
+                } else {
+                    "record"
+                })
+            }
+        }
+
+        div() {
+            a(id="download",ref=download_ref) { "download" }
+            audio(controls=true, id="audio") {
+                source(src="", id="source")
+            }
+        }
+    }
+}
+
+#[component]
 fn ImageGen<G: Html>(ctx: Scope) -> View<G> {
     let prompt = create_signal(ctx, "".to_string());
     let request_new = create_signal(ctx, None);
     let response: &Signal<Option<GenerateImageResult>> = create_signal(ctx, None);
 
     let imgdata = create_memo(ctx, || {
-        response.get().as_ref().clone()
+        response
+            .get()
+            .as_ref()
+            .clone()
             .map(|r| r.data.get(0).unwrap().b64_json.clone())
             .unwrap_or("".to_string())
     });
@@ -571,9 +731,10 @@ fn ImageGen<G: Html>(ctx: Scope) -> View<G> {
             match serde_wasm_bindgen::to_value(&params) {
                 Ok(params) => match openai_generate_image(params).await {
                     Ok(resp) => {
-                        let resp = serde_wasm_bindgen::from_value::<GenerateImageResult>(resp).unwrap();
+                        let resp =
+                            serde_wasm_bindgen::from_value::<GenerateImageResult>(resp).unwrap();
                         response.set(Some(resp));
-                    },
+                    }
                     Err(e) => {
                         wasm_log!("{:?}", e);
                     }
@@ -582,11 +743,10 @@ fn ImageGen<G: Html>(ctx: Scope) -> View<G> {
                     wasm_log!("{:?}", e);
                 }
             }
-
         });
     });
 
-    view! { ctx, 
+    view! { ctx,
         div(class="flex flex-col w-full") {
             TextArea(placeholder="image prompt...".to_string(),
                 content=prompt,
@@ -676,6 +836,7 @@ fn Header<G: Html>(ctx: Scope) -> View<G> {
                     li{a(href="/chats"){"Chats"}}
                     li{a(href="/codeassist"){"CodeAssist"}}
                     li{a(href="/imgen"){"Imagen"}}
+                    li{a(href="/voice"){"Voice"}}
                     li{a(href="/about"){"About"}}
                 }
             }
@@ -692,7 +853,6 @@ fn Header<G: Html>(ctx: Scope) -> View<G> {
 
     }
 }
-
 
 fn window_event_listener<'a, F>(ctx: Scope<'a>, ev: &str, f: F)
 where
@@ -739,6 +899,7 @@ fn App<G: Html>(ctx: Scope) -> View<G> {
                                     AppRoutes::Home => view!{cx, Home},
                                     AppRoutes::GenImage => view!{cx, ImageGen},
                                     AppRoutes::CodeAssist => view!{cx, NotFound},
+                                    AppRoutes::Voice => view!{cx, Voice},
                                     AppRoutes::NotFound => view!{cx, NotFound},
                                 })
                             }
@@ -797,4 +958,3 @@ extern "C" {
     fn highlightAll();
     fn highlightAuto(html: JsValue) -> JsValue;
 }
-
